@@ -20,9 +20,10 @@ type ChatRequest struct {
 }
 
 type ParsedRequest struct {
-	Model  string
-	Prompt string
-	Stream bool
+	Model    string
+	Prompt   string
+	Stream   bool
+	HasTools bool
 }
 
 func PromptFromChat(req ChatRequest) string {
@@ -76,14 +77,22 @@ func ParseChatRequest(payload map[string]any) ParsedRequest {
 	model := strOr(payload["model"], "agent")
 	stream := boolOr(payload["stream"], false)
 	prompt := chatMessagesToPrompt(asMessages(payload["messages"]))
-	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream}
+	tools := extractTools(payload)
+	choice := extractToolChoice(payload)
+	prefix := buildToolSystemPrefix(tools, choice)
+	prompt = prependSystemPrefix(prefix, prompt)
+	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream, HasTools: len(tools) > 0}
 }
 
 func ParseResponsesRequest(payload map[string]any) ParsedRequest {
 	model := strOr(payload["model"], "agent")
 	stream := boolOr(payload["stream"], false)
 	prompt := PromptFromResponses(payload)
-	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream}
+	tools := extractTools(payload)
+	choice := extractToolChoice(payload)
+	prefix := buildToolSystemPrefix(tools, choice)
+	prompt = prependSystemPrefix(prefix, prompt)
+	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream, HasTools: len(tools) > 0}
 }
 
 func BuildChatCompletionResponse(text string, model string) map[string]any {
@@ -316,6 +325,152 @@ func boolOr(v any, def bool) bool {
 		return b
 	}
 	return def
+}
+
+func compressSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if v, ok := schema["type"]; ok {
+		out["type"] = v
+	}
+	if v, ok := schema["required"]; ok {
+		out["required"] = v
+	}
+	if v, ok := schema["enum"]; ok {
+		out["enum"] = v
+	}
+	if props, ok := schema["properties"].(map[string]any); ok {
+		outProps := map[string]any{}
+		for k, pv := range props {
+			if m, ok := pv.(map[string]any); ok {
+				outProps[k] = compressSchema(m)
+			} else {
+				outProps[k] = pv
+			}
+		}
+		out["properties"] = outProps
+	}
+	if items, ok := schema["items"].(map[string]any); ok {
+		out["items"] = compressSchema(items)
+	} else if items, ok := schema["items"].([]any); ok {
+		out["items"] = items
+	}
+	return out
+}
+
+func extractTools(payload map[string]any) []map[string]any {
+	var out []map[string]any
+	if payload == nil {
+		return out
+	}
+	if tools, ok := payload["tools"].([]any); ok {
+		for _, item := range tools {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			fn, _ := m["function"].(map[string]any)
+			tool := compressTool(fn)
+			if tool != nil {
+				out = append(out, tool)
+			}
+		}
+	}
+	if fns, ok := payload["functions"].([]any); ok {
+		for _, item := range fns {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			tool := compressTool(m)
+			if tool != nil {
+				out = append(out, tool)
+			}
+		}
+	}
+	return out
+}
+
+func compressTool(fn map[string]any) map[string]any {
+	if fn == nil {
+		return nil
+	}
+	name, _ := fn["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return nil
+	}
+	out := map[string]any{"name": name}
+	if desc, ok := fn["description"].(string); ok && strings.TrimSpace(desc) != "" {
+		out["description"] = desc
+	}
+	if params, ok := fn["parameters"].(map[string]any); ok {
+		out["parameters"] = compressSchema(params)
+	}
+	return out
+}
+
+func extractToolChoice(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	if v, ok := payload["tool_choice"]; ok {
+		if name := toolChoiceName(v); name != "" {
+			return name
+		}
+	}
+	if v, ok := payload["function_call"]; ok {
+		if name := toolChoiceName(v); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func toolChoiceName(v any) string {
+	switch tc := v.(type) {
+	case string:
+		return tc
+	case map[string]any:
+		if fn, ok := tc["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok {
+				return name
+			}
+		}
+		if name, ok := tc["name"].(string); ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func buildToolSystemPrefix(tools []map[string]any, choice string) string {
+	if len(tools) == 0 && strings.TrimSpace(choice) == "" {
+		return ""
+	}
+	payload := map[string]any{}
+	if len(tools) > 0 {
+		payload["tools"] = tools
+	}
+	if strings.TrimSpace(choice) != "" {
+		payload["tool_choice"] = choice
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return "system: " + string(b)
+}
+
+func prependSystemPrefix(prefix string, prompt string) string {
+	if strings.TrimSpace(prefix) == "" {
+		return prompt
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return prefix
+	}
+	return prefix + "\n" + strings.TrimSpace(prompt)
 }
 
 func asMessages(v any) []Message {
