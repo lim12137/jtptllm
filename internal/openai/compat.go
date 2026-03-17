@@ -133,6 +133,90 @@ func BuildResponsesResponse(text string, model string) map[string]any {
 	}
 }
 
+func IterChatCompletionSSE(deltas []string, model string, chatcmplID string) []string {
+	created := time.Now().Unix()
+	cid := chatcmplID
+	if cid == "" {
+		cid = newID("chatcmpl")
+	}
+	var out []string
+	first := map[string]any{
+		"id":      cid,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil}},
+	}
+	out = append(out, sseData(first))
+	for _, d := range deltas {
+		if d == "" {
+			continue
+		}
+		chunk := map[string]any{
+			"id":      cid,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   model,
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": d}, "finish_reason": nil}},
+		}
+		out = append(out, sseData(chunk))
+	}
+	final := map[string]any{
+		"id":      cid,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+	}
+	out = append(out, sseData(final))
+	out = append(out, "data: [DONE]\n\n")
+	return out
+}
+
+func IterResponsesSSE(deltas []string, model string, respID string) []string {
+	rid := respID
+	if rid == "" {
+		rid = newID("resp")
+	}
+	created := time.Now().Unix()
+	var out []string
+	createdEvt := map[string]any{"type": "response.created", "response": map[string]any{"id": rid, "model": model, "created_at": created}}
+	out = append(out, sseData(createdEvt))
+	for _, d := range deltas {
+		if d == "" {
+			continue
+		}
+		out = append(out, sseData(map[string]any{"type": "response.output_text.delta", "delta": d, "response_id": rid}))
+	}
+	out = append(out, sseData(map[string]any{"type": "response.completed", "response_id": rid}))
+	out = append(out, "data: [DONE]\n\n")
+	return out
+}
+
+func DiffDeltas(chunks []string) []string {
+	full := ""
+	var out []string
+	for _, chunk := range chunks {
+		if chunk == "" {
+			continue
+		}
+		if full != "" && strings.HasPrefix(chunk, full) {
+			delta := chunk[len(full):]
+			full = chunk
+			if delta != "" {
+				out = append(out, delta)
+			}
+			continue
+		}
+		delta := chunk
+		full = full + chunk
+		if delta != "" {
+			out = append(out, delta)
+		}
+	}
+	return out
+}
+
 func withInstructions(instructions string, prompt string) string {
 	ins := strings.TrimSpace(instructions)
 	if ins == "" {
@@ -262,4 +346,9 @@ func newID(prefix string) string {
 		b[i] = letters[rand.Intn(len(letters))]
 	}
 	return prefix + "_" + string(b)
+}
+
+func sseData(obj map[string]any) string {
+	b, _ := json.Marshal(obj)
+	return "data: " + string(b) + "\n\n"
 }
