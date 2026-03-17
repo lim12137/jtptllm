@@ -26,6 +26,18 @@ type ParsedRequest struct {
 	HasTools bool
 }
 
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+}
+
+type ToolParseResult struct {
+	ToolCalls   []ToolCall
+	Content     string
+	HasSentinel bool
+}
+
 func PromptFromChat(req ChatRequest) string {
 	return chatMessagesToPrompt(req.Messages)
 }
@@ -121,6 +133,48 @@ func BuildChatCompletionResponse(text string, model string) map[string]any {
 	}
 }
 
+func BuildChatCompletionResponseFromText(text string, model string) map[string]any {
+	parsed := ParseToolSentinel(text)
+	content := parsed.Content
+	if strings.TrimSpace(content) == "" {
+		content = strings.TrimSpace(text)
+	}
+	if len(parsed.ToolCalls) == 0 {
+		return BuildChatCompletionResponse(content, model)
+	}
+	created := time.Now().Unix()
+	cid := newID("chatcmpl")
+	msg := map[string]any{
+		"role":       "assistant",
+		"content":    content,
+		"tool_calls": buildChatToolCalls(parsed.ToolCalls),
+	}
+	if len(parsed.ToolCalls) == 1 {
+		msg["function_call"] = map[string]any{
+			"name":      parsed.ToolCalls[0].Name,
+			"arguments": parsed.ToolCalls[0].Arguments,
+		}
+	}
+	return map[string]any{
+		"id":      cid,
+		"object":  "chat.completion",
+		"created": created,
+		"model":   model,
+		"choices": []any{
+			map[string]any{
+				"index":         0,
+				"message":       msg,
+				"finish_reason": "tool_calls",
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     0,
+			"completion_tokens": 0,
+			"total_tokens":      0,
+		},
+	}
+}
+
 func BuildResponsesResponse(text string, model string) map[string]any {
 	rid := newID("resp")
 	created := time.Now().Unix()
@@ -139,6 +193,36 @@ func BuildResponsesResponse(text string, model string) map[string]any {
 			},
 		},
 		"output_text": text,
+	}
+}
+
+func BuildResponsesResponseFromText(text string, model string) map[string]any {
+	parsed := ParseToolSentinel(text)
+	content := parsed.Content
+	if strings.TrimSpace(content) == "" {
+		content = strings.TrimSpace(text)
+	}
+	if len(parsed.ToolCalls) == 0 {
+		return BuildResponsesResponse(content, model)
+	}
+	rid := newID("resp")
+	created := time.Now().Unix()
+	output := make([]any, 0, len(parsed.ToolCalls))
+	for _, call := range parsed.ToolCalls {
+		output = append(output, map[string]any{
+			"type":       "function_call",
+			"call_id":    call.ID,
+			"name":       call.Name,
+			"arguments":  call.Arguments,
+		})
+	}
+	return map[string]any{
+		"id":         rid,
+		"object":     "response",
+		"created_at": created,
+		"model":      model,
+		"output":     output,
+		"output_text": content,
 	}
 }
 
@@ -325,6 +409,69 @@ func boolOr(v any, def bool) bool {
 		return b
 	}
 	return def
+}
+
+func ParseToolSentinel(text string) ToolParseResult {
+	start := strings.Index(text, "<<<TC>>>")
+	end := strings.Index(text, "<<<END>>>")
+	if start < 0 || end < 0 || end <= start+len("<<<TC>>>") {
+		return ToolParseResult{Content: strings.TrimSpace(text)}
+	}
+	raw := text[start+len("<<<TC>>>") : end]
+	var payload struct {
+		TC []map[string]any `json:"tc"`
+		C  any             `json:"c"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ToolParseResult{Content: strings.TrimSpace(text)}
+	}
+	content := ""
+	if payload.C != nil {
+		if s, ok := payload.C.(string); ok {
+			content = s
+		} else {
+			content = toString(payload.C)
+		}
+	}
+	calls := make([]ToolCall, 0, len(payload.TC))
+	for _, item := range payload.TC {
+		name, _ := item["n"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		id, _ := item["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = newID("call")
+		}
+		argStr := ""
+		if av, ok := item["a"]; ok {
+			switch v := av.(type) {
+			case string:
+				argStr = v
+			default:
+				if b, err := json.Marshal(v); err == nil {
+					argStr = string(b)
+				}
+			}
+		}
+		calls = append(calls, ToolCall{ID: id, Name: name, Arguments: argStr})
+	}
+	return ToolParseResult{ToolCalls: calls, Content: strings.TrimSpace(content), HasSentinel: true}
+}
+
+func buildChatToolCalls(calls []ToolCall) []any {
+	out := make([]any, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, map[string]any{
+			"id":   call.ID,
+			"type": "function",
+			"function": map[string]any{
+				"name":      call.Name,
+				"arguments": call.Arguments,
+			},
+		})
+	}
+	return out
 }
 
 func compressSchema(schema map[string]any) map[string]any {
