@@ -131,7 +131,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
-		respPayload := openai.BuildChatCompletionResponse(text, parsed.Model)
+		respPayload := openai.BuildChatCompletionResponseFromText(text, parsed.Model)
 		logIO(map[string]any{
 			"dir":         "out",
 			"path":        r.URL.Path,
@@ -141,6 +141,38 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			"model":       parsed.Model,
 			"gateway":     runResp,
 			"output":      respPayload,
+		})
+		writeJSON(w, stdhttp.StatusOK, respPayload)
+		return
+	}
+
+	if parsed.HasTools {
+		resp, _, err := s.gateway.Run(r.Context(), gateway.RunRequest{
+			SessionID: sessionID,
+			Text:      parsed.Prompt,
+			Stream:    true,
+			Delta:     true,
+		})
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		streamText, err := collectStreamText(resp.Body)
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		respPayload := openai.BuildChatCompletionResponseFromText(streamText, parsed.Model)
+		logIO(map[string]any{
+			"dir":           "out",
+			"path":          r.URL.Path,
+			"stream":        true,
+			"session_id":    sessionID,
+			"session_key":   sessionKey,
+			"model":         parsed.Model,
+			"stream_output": streamText,
+			"output":        respPayload,
 		})
 		writeJSON(w, stdhttp.StatusOK, respPayload)
 		return
@@ -218,7 +250,7 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
-		respPayload := openai.BuildResponsesResponse(text, parsed.Model)
+		respPayload := openai.BuildResponsesResponseFromText(text, parsed.Model)
 		logIO(map[string]any{
 			"dir":         "out",
 			"path":        r.URL.Path,
@@ -228,6 +260,38 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			"model":       parsed.Model,
 			"gateway":     runResp,
 			"output":      respPayload,
+		})
+		writeJSON(w, stdhttp.StatusOK, respPayload)
+		return
+	}
+
+	if parsed.HasTools {
+		resp, _, err := s.gateway.Run(r.Context(), gateway.RunRequest{
+			SessionID: sessionID,
+			Text:      parsed.Prompt,
+			Stream:    true,
+			Delta:     true,
+		})
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		streamText, err := collectStreamText(resp.Body)
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		respPayload := openai.BuildResponsesResponseFromText(streamText, parsed.Model)
+		logIO(map[string]any{
+			"dir":           "out",
+			"path":          r.URL.Path,
+			"stream":        true,
+			"session_id":    sessionID,
+			"session_key":   sessionKey,
+			"model":         parsed.Model,
+			"stream_output": streamText,
+			"output":        respPayload,
 		})
 		writeJSON(w, stdhttp.StatusOK, respPayload)
 		return
@@ -584,6 +648,17 @@ func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) (st
 		return full.String(), err
 	}
 	flusher.Flush()
+	return full.String(), nil
+}
+
+func collectStreamText(body io.Reader) (string, error) {
+	var full strings.Builder
+	if err := streamGatewayDeltas(body, func(delta string) error {
+		full.WriteString(delta)
+		return nil
+	}); err != nil {
+		return full.String(), err
+	}
 	return full.String(), nil
 }
 
