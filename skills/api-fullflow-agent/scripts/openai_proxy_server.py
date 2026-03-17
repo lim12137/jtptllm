@@ -36,12 +36,20 @@ from openai_compat import (
 )
 
 
-def create_app(client: AgentGatewayClient) -> FastAPI:
+def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> FastAPI:
     app = FastAPI(title="Agent Gateway OpenAI Proxy", version="0.1.0")
 
     @app.get("/health")
     def health() -> Dict[str, Any]:
         return {"ok": True}
+
+    @app.get("/model")
+    def model_alias() -> Dict[str, Any]:
+        return {"model": default_model}
+
+    @app.get("/v1/models")
+    def models() -> Dict[str, Any]:
+        return {"object": "list", "data": [{"id": default_model, "object": "model"}]}
 
     @app.post("/v1/chat/completions")
     async def chat_completions(req: Request) -> Any:
@@ -139,17 +147,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="OpenAI compatible proxy for Agent gateway API")
     parser.add_argument("--api-txt", default="api.txt", help="Path to api.txt (key/agentCode/agentVersion)")
     parser.add_argument("--base-url", default=None, help="Override gateway base url")
+    parser.add_argument("--default-model", default="agent", help="Default model name for /model and /v1/models")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", default=8000, type=int)
     parser.add_argument("--log-level", default="info", choices=["critical", "error", "warning", "info", "debug"])
     args = parser.parse_args()
 
     client = _load_client(args.api_txt, args.base_url)
-    app = create_app(client)
+    app = create_app(client, default_model=args.default_model)
 
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
 
 if __name__ == "__main__":
     main()
-
