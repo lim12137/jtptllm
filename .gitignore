@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.worktrees/
+worktrees/
 .mypy_cache/
 
 # Local config / secrets
