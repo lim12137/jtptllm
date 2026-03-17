@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import uvicorn
 
@@ -125,6 +126,14 @@ def create_app(
     session_ttl_s: int = 600,
 ) -> FastAPI:
     app = FastAPI(title="Agent Gateway OpenAI Proxy", version="0.1.0")
+    # Allow browser direct calls by default (can be restricted later).
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     session_mgr = SessionManager(client, ttl_s=session_ttl_s) if session_ttl_s > 0 else None
 
     @app.get("/health")
