@@ -11,15 +11,44 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 from api_txt import load_api_config
 from gateway_client import AgentGatewayClient, AgentGatewayError
-from openai_compat import extract_gateway_text_delta, extract_gateway_text_from_nonstream
+from openai_compat import extract_gateway_text_delta, extract_gateway_text_from_nonstream, iter_smart_deltas
+
+
+def _ensure_utf8_stdout() -> None:
+    """
+    Force UTF-8 stdout on Windows to avoid UnicodeEncodeError (e.g. emoji).
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _safe_print(*args, **kwargs) -> None:
+    """
+    Print with UTF-8 encoding; fall back to safe replacement if needed.
+    """
+    try:
+        print(*args, **kwargs)
+        return
+    except UnicodeEncodeError:
+        safe_args = []
+        for a in args:
+            if isinstance(a, str):
+                safe_args.append(a.encode("utf-8", errors="replace").decode("utf-8", errors="replace"))
+            else:
+                safe_args.append(a)
+        print(*safe_args, **kwargs)
 
 
 def main() -> None:
+    _ensure_utf8_stdout()
     parser = argparse.ArgumentParser(description="Agent 网关全流程调用（createSession/run/deleteSession）")
     parser.add_argument("--api-txt", default="api.txt")
     parser.add_argument("--base-url", default=None)
@@ -47,7 +76,7 @@ def main() -> None:
         if not args.stream:
             run_resp = cli.run(session_id=session_id, text=args.text, stream=False, delta=args.delta, trace=args.trace)
             text = extract_gateway_text_from_nonstream(run_resp)
-            print(text)
+            _safe_print(text)
 
             if args.feedback:
                 _try_feedback(cli, session_id=session_id, run_resp=run_resp, vote=args.vote, comment=args.comment)
@@ -60,11 +89,15 @@ def main() -> None:
             delta=args.delta,
             trace=args.trace,
         )
-        for evt in events_iter:
-            d = extract_gateway_text_delta(evt)
-            if d:
-                print(d, end="", flush=True)
-        print("")
+        def _raw_chunks():
+            for evt in events_iter:
+                d = extract_gateway_text_delta(evt)
+                if d:
+                    yield d
+
+        for d in iter_smart_deltas(_raw_chunks()):
+            _safe_print(d, end="", flush=True)
+        _safe_print("")
 
         if args.feedback and meta.request_id and meta.task_id:
             cli.feedback(
@@ -76,12 +109,12 @@ def main() -> None:
                 unique_code=meta.unique_code,
             )
         elif args.feedback:
-            print("[WARN] 未能从流式事件提取 requestId/taskId，跳过 feedback。")
+            _safe_print("[WARN] 未能从流式事件提取 requestId/taskId，跳过 feedback。")
     finally:
         try:
             cli.delete_session(session_id)
         except Exception as e:  # noqa: BLE001
-            print(f"[WARN] deleteSession 失败: {e}")
+            _safe_print(f"[WARN] deleteSession 失败: {e}")
 
 
 def _try_feedback(
@@ -98,7 +131,7 @@ def _try_feedback(
 
     data = run_resp.get("data")
     if not isinstance(data, dict):
-        print("[WARN] run 非流式响应不包含 data，无法 feedback。")
+        _safe_print("[WARN] run 非流式响应不包含 data，无法 feedback。")
         return
 
     # Best-effort: metadata might exist under message.metadata
@@ -112,7 +145,7 @@ def _try_feedback(
     unique_code = md.get("uniqueCode") or md.get("unique_code")
 
     if not (isinstance(request_id, str) and isinstance(task_id, str)):
-        print("[WARN] 未能从非流式响应提取 requestId/taskId，跳过 feedback。")
+        _safe_print("[WARN] 未能从非流式响应提取 requestId/taskId，跳过 feedback。")
         return
 
     cli.feedback(

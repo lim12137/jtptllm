@@ -29,6 +29,7 @@ from openai_compat import (
     build_responses_response,
     extract_gateway_text_delta,
     extract_gateway_text_from_nonstream,
+    iter_smart_deltas,
     iter_chat_completion_sse,
     iter_responses_sse,
     parse_openai_chat_request,
@@ -70,10 +71,14 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
             events_iter, _meta = client.run(session_id=session_id, text=parsed.prompt, stream=True)
 
             def _deltas() -> Iterator[str]:
-                for evt in events_iter:
-                    d = extract_gateway_text_delta(evt)
-                    if d:
-                        yield d
+                def _raw():
+                    for evt in events_iter:
+                        d = extract_gateway_text_delta(evt)
+                        if d:
+                            yield d
+
+                for d in iter_smart_deltas(_raw()):
+                    yield d
 
             sse_iter = iter_chat_completion_sse(deltas=_deltas(), model=parsed.model)
             return StreamingResponse(
@@ -106,10 +111,14 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
             events_iter, _meta = client.run(session_id=session_id, text=parsed.prompt, stream=True)
 
             def _deltas() -> Iterator[str]:
-                for evt in events_iter:
-                    d = extract_gateway_text_delta(evt)
-                    if d:
-                        yield d
+                def _raw():
+                    for evt in events_iter:
+                        d = extract_gateway_text_delta(evt)
+                        if d:
+                            yield d
+
+                for d in iter_smart_deltas(_raw()):
+                    yield d
 
             sse_iter = iter_responses_sse(deltas=_deltas(), model=parsed.model)
             return StreamingResponse(

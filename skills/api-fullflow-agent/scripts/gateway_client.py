@@ -183,6 +183,8 @@ class AgentGatewayClient:
             raise AgentGatewayError(f"run(stream) HTTP {r.status_code}: {r.text}", response=r)
 
         meta = RunMeta()
+        # Force UTF-8 for event-stream if server doesn't set it.
+        r.encoding = "utf-8"
         events = _iter_stream_events(r, meta)
         return events, meta
 
@@ -205,10 +207,13 @@ def _iter_stream_events(
     """
 
     # NOTE: requests iter_lines handles chunk boundaries for us.
-    for raw in r.iter_lines(decode_unicode=True):
+    for raw in r.iter_lines(decode_unicode=False):
         if raw is None:
             continue
-        line = str(raw).strip()
+        if isinstance(raw, bytes):
+            line = raw.decode("utf-8", errors="replace").strip()
+        else:
+            line = str(raw).strip()
         if not line:
             continue
         if line.startswith("data:"):
@@ -293,4 +298,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

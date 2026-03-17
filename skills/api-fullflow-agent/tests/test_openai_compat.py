@@ -5,6 +5,7 @@ from openai_compat import (
     extract_gateway_text_from_nonstream,
     iter_chat_completion_sse,
     iter_responses_sse,
+    iter_smart_deltas,
     openai_chat_messages_to_prompt,
     openai_responses_input_to_prompt,
 )
@@ -69,3 +70,12 @@ def test_build_openai_nonstream_responses_have_text():
     b = build_responses_response(text="y", model="agent")
     assert b["output_text"] == "y"
 
+
+def test_iter_smart_deltas_handles_full_snapshots():
+    chunks = ["你", "你好", "你好！"]
+    assert list(iter_smart_deltas(chunks)) == ["你", "好", "！"]
+
+
+def test_iter_smart_deltas_passes_true_deltas():
+    chunks = ["你", "好", "！"]
+    assert list(iter_smart_deltas(chunks)) == ["你", "好", "！"]

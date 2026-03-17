@@ -357,6 +357,28 @@ def _sse_data(obj: Dict[str, Any]) -> str:
     return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
 
+def iter_smart_deltas(chunks: Iterable[str]) -> Iterable[str]:
+    """
+    Convert mixed stream chunks into clean deltas.
+
+    If upstream sends full snapshots (prefix of previous output),
+    emit only the suffix. If upstream sends true deltas, emit as-is.
+    """
+
+    full = ""
+    for chunk in chunks:
+        if not chunk:
+            continue
+        if full and chunk.startswith(full):
+            delta = chunk[len(full) :]
+            full = chunk
+        else:
+            delta = chunk
+            full = full + chunk
+        if delta:
+            yield delta
+
+
 @dataclass(frozen=True)
 class ParsedOpenAIRequest:
     model: str
@@ -376,4 +398,3 @@ def parse_openai_responses_request(payload: Dict[str, Any]) -> ParsedOpenAIReque
     stream = bool(payload.get("stream", False))
     prompt = openai_responses_input_to_prompt(payload)
     return ParsedOpenAIRequest(model=model, prompt=prompt, stream=stream)
-
