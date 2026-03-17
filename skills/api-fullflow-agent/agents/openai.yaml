@@ -1,0 +1,3 @@
+interface:
+  display_name: "API Fullflow Agent"
+  short_description: "基于 api.txt 搭建智能体网关全流程调用器，并提供 OpenAI 新旧接口兼容代理"

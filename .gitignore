@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local config / secrets
+api.txt
+*.env
+
+# Generated artifacts
+pdf_images/
+
