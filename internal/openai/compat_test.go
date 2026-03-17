@@ -72,3 +72,17 @@ func TestParseChatRequestCompressesItemsArray(t *testing.T) {
 		t.Fatalf("items schema not compressed")
 	}
 }
+
+func TestParseToolSentinelToChatResponse(t *testing.T) {
+	text := "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	out := BuildChatCompletionResponseFromText(text, "agent")
+	choices := out["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["tool_calls"] == nil {
+		t.Fatalf("missing tool_calls")
+	}
+}
