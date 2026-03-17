@@ -42,3 +42,33 @@ func TestParseChatRequestWithToolsAddsSystemPrefix(t *testing.T) {
 		t.Fatalf("schema not compressed")
 	}
 }
+
+func TestParseChatRequestCompressesItemsArray(t *testing.T) {
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "list_places",
+				"description": "List places",
+				"parameters": map[string]any{
+					"type": "array",
+					"items": []any{
+						map[string]any{
+							"type":  "object",
+							"title": "ItemSchema",
+							"properties": map[string]any{
+								"name": map[string]any{"type": "string", "title": "Name"},
+							},
+						},
+					},
+				},
+			},
+		}},
+	}
+	parsed := ParseChatRequest(payload)
+	if strings.Contains(parsed.Prompt, "title") {
+		t.Fatalf("items schema not compressed")
+	}
+}

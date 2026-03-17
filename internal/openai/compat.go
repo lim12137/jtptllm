@@ -355,7 +355,15 @@ func compressSchema(schema map[string]any) map[string]any {
 	if items, ok := schema["items"].(map[string]any); ok {
 		out["items"] = compressSchema(items)
 	} else if items, ok := schema["items"].([]any); ok {
-		out["items"] = items
+		outItems := make([]any, 0, len(items))
+		for _, item := range items {
+			if m, ok := item.(map[string]any); ok {
+				outItems = append(outItems, compressSchema(m))
+			} else {
+				outItems = append(outItems, item)
+			}
+		}
+		out["items"] = outItems
 	}
 	return out
 }
