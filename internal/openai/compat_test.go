@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,80 @@ func TestParseToolSentinelToChatResponse(t *testing.T) {
 	msg := choices[0].(map[string]any)["message"].(map[string]any)
 	if msg["tool_calls"] == nil {
 		t.Fatalf("missing tool_calls")
+	}
+}
+
+func TestParseToolSentinelExtractsContentAndArgs(t *testing.T) {
+	text := "<<<TC>>>{\"tc\":[{\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\",\"unit\":\"c\"}}],\"c\":\"ok\"}<<<END>>>"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != "ok" {
+		t.Fatalf("content=%q", res.Content)
+	}
+	if !strings.HasPrefix(res.ToolCalls[0].ID, "call_") {
+		t.Fatalf("missing generated id")
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args["location"] != "Paris" || args["unit"] != "c" {
+		t.Fatalf("args=%v", args)
+	}
+}
+
+func TestBuildChatCompletionResponseFromTextIncludesFunctionCall(t *testing.T) {
+	text := "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
+	out := BuildChatCompletionResponseFromText(text, "agent")
+	choices := out["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["tool_calls"] == nil {
+		t.Fatalf("missing tool_calls")
+	}
+	if msg["function_call"] == nil {
+		t.Fatalf("missing function_call")
+	}
+	fc := msg["function_call"].(map[string]any)
+	if fc["name"] != "get_weather" {
+		t.Fatalf("function_call name=%v", fc["name"])
+	}
+}
+
+func TestBuildResponsesResponseFromTextCreatesFunctionCalls(t *testing.T) {
+	text := "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
+	out := BuildResponsesResponseFromText(text, "agent")
+	output := out["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("output len=%d", len(output))
+	}
+	item := output[0].(map[string]any)
+	if item["type"] != "function_call" {
+		t.Fatalf("type=%v", item["type"])
+	}
+	if item["name"] != "get_weather" {
+		t.Fatalf("name=%v", item["name"])
+	}
+	if item["call_id"] != "call_1" {
+		t.Fatalf("call_id=%v", item["call_id"])
+	}
+}
+
+func TestParseToolSentinelFallbackToPlainText(t *testing.T) {
+	text := "<<<TC>>>not json<<<END>>>"
+	out := BuildChatCompletionResponseFromText(text, "agent")
+	choices := out["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["content"] != text {
+		t.Fatalf("content=%v", msg["content"])
+	}
+	if msg["tool_calls"] != nil {
+		t.Fatalf("unexpected tool_calls")
+	}
+
+	out2 := BuildResponsesResponseFromText(text, "agent")
+	if out2["output_text"] != text {
+		t.Fatalf("output_text=%v", out2["output_text"])
 	}
 }
