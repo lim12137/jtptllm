@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -50,4 +51,12 @@ func ParseApiTxt(data []byte) (Config, error) {
 		cfg.BaseURL = DefaultBaseURL
 	}
 	return cfg, nil
+}
+
+func LoadFromFile(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	return ParseApiTxt(data)
 }
