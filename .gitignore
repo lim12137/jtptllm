@@ -10,4 +10,5 @@ api.txt
 
 # Generated artifacts
 pdf_images/
-
+proxy_8022.log
+proxy_8022.err

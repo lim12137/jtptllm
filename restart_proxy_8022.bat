@@ -15,6 +15,6 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":%PORT% "') do (
 echo Starting proxy on port %PORT%...
 echo Stdout: %OUT_LOG%
 echo Stderr: %ERR_LOG%
-powershell -Command "Start-Process -FilePath python -ArgumentList '%SCRIPT%','--api-txt','%API_TXT%','--host','0.0.0.0','--port','%PORT%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -NoNewWindow"
+powershell -Command "Start-Process -FilePath python -ArgumentList '%SCRIPT%','--api-txt','%API_TXT%','--host','0.0.0.0','--port','%PORT%','--session-ttl','600' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -NoNewWindow"
 
 endlocal

@@ -36,9 +36,96 @@ from openai_compat import (
     parse_openai_responses_request,
 )
 
+import threading
+import time
+from typing import Any, Dict, Iterator, Optional, Tuple
 
-def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> FastAPI:
+
+class SessionManager:
+    """
+    Reuse gateway sessionId per client key with idle TTL.
+
+    Key priority:
+    - Header: x-agent-session
+    - Header: x-client-id
+    - Fallback: client IP
+    """
+
+    def __init__(self, client: AgentGatewayClient, ttl_s: int = 600) -> None:
+        self._client = client
+        self._ttl_s = max(0, int(ttl_s))
+        self._lock = threading.Lock()
+        # key -> {"session_id": str, "last": float}
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+
+    def _now(self) -> float:
+        return time.monotonic()
+
+    def _expired(self, last: float, now: float) -> bool:
+        return self._ttl_s > 0 and (now - last) > self._ttl_s
+
+    def _cleanup_locked(self, now: float) -> None:
+        for key, entry in list(self._sessions.items()):
+            if self._expired(entry["last"], now):
+                self._drop_locked(key, entry["session_id"])
+
+    def _drop_locked(self, key: str, session_id: str) -> None:
+        self._sessions.pop(key, None)
+        try:
+            self._client.delete_session(session_id)
+        except Exception:
+            pass
+
+    def get_or_create(self, key: str, *, force_new: bool = False) -> str:
+        now = self._now()
+        with self._lock:
+            self._cleanup_locked(now)
+            if not force_new and self._ttl_s > 0:
+                entry = self._sessions.get(key)
+                if entry:
+                    entry["last"] = now
+                    return entry["session_id"]
+
+        # create outside lock (network call)
+        session_id = self._client.create_session()
+        with self._lock:
+            self._sessions[key] = {"session_id": session_id, "last": now}
+        return session_id
+
+    def invalidate(self, key: str) -> None:
+        with self._lock:
+            entry = self._sessions.get(key)
+            if not entry:
+                return
+            self._drop_locked(key, entry["session_id"])
+
+    def touch(self, key: str) -> None:
+        now = self._now()
+        with self._lock:
+            entry = self._sessions.get(key)
+            if entry:
+                entry["last"] = now
+
+
+def _session_key(req: Request) -> str:
+    hdr = req.headers.get("x-agent-session")
+    if hdr:
+        return f"hdr:{hdr}"
+    cid = req.headers.get("x-client-id")
+    if cid:
+        return f"cid:{cid}"
+    host = req.client.host if req.client else "unknown"
+    return f"ip:{host}"
+
+
+def create_app(
+    client: AgentGatewayClient,
+    *,
+    default_model: str = "agent",
+    session_ttl_s: int = 600,
+) -> FastAPI:
     app = FastAPI(title="Agent Gateway OpenAI Proxy", version="0.1.0")
+    session_mgr = SessionManager(client, ttl_s=session_ttl_s) if session_ttl_s > 0 else None
 
     @app.get("/health")
     def health() -> Dict[str, Any]:
@@ -60,7 +147,16 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
         if not parsed.prompt:
             raise HTTPException(status_code=400, detail="messages 为空，无法生成 prompt")
 
-        session_id = client.create_session()
+        session_key = _session_key(req)
+        force_new = req.headers.get("x-agent-session-reset", "").lower() in ("1", "true", "yes")
+        close_after = req.headers.get("x-agent-session-close", "").lower() in ("1", "true", "yes")
+
+        if session_mgr:
+            session_id = session_mgr.get_or_create(session_key, force_new=force_new)
+            delete_on_finish = False
+        else:
+            session_id = client.create_session()
+            delete_on_finish = True
         try:
             if not parsed.stream:
                 run_resp = client.run(session_id=session_id, text=parsed.prompt, stream=False)
@@ -77,8 +173,13 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
                         if d:
                             yield d
 
-                for d in iter_smart_deltas(_raw()):
-                    yield d
+                try:
+                    for d in iter_smart_deltas(_raw()):
+                        yield d
+                except Exception:
+                    if session_mgr:
+                        session_mgr.invalidate(session_key)
+                    raise
 
             sse_iter = iter_chat_completion_sse(deltas=_deltas(), model=parsed.model)
             return StreamingResponse(
@@ -87,11 +188,13 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
                 headers={"Cache-Control": "no-cache"},
             )
         finally:
-            # Best-effort cleanup
-            try:
-                client.delete_session(session_id)
-            except Exception:
-                pass
+            if delete_on_finish:
+                try:
+                    client.delete_session(session_id)
+                except Exception:
+                    pass
+            elif close_after and session_mgr:
+                session_mgr.invalidate(session_key)
 
     @app.post("/v1/responses")
     async def responses(req: Request) -> Any:
@@ -101,7 +204,16 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
         if not parsed.prompt:
             raise HTTPException(status_code=400, detail="input/messages 为空，无法生成 prompt")
 
-        session_id = client.create_session()
+        session_key = _session_key(req)
+        force_new = req.headers.get("x-agent-session-reset", "").lower() in ("1", "true", "yes")
+        close_after = req.headers.get("x-agent-session-close", "").lower() in ("1", "true", "yes")
+
+        if session_mgr:
+            session_id = session_mgr.get_or_create(session_key, force_new=force_new)
+            delete_on_finish = False
+        else:
+            session_id = client.create_session()
+            delete_on_finish = True
         try:
             if not parsed.stream:
                 run_resp = client.run(session_id=session_id, text=parsed.prompt, stream=False)
@@ -117,8 +229,13 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
                         if d:
                             yield d
 
-                for d in iter_smart_deltas(_raw()):
-                    yield d
+                try:
+                    for d in iter_smart_deltas(_raw()):
+                        yield d
+                except Exception:
+                    if session_mgr:
+                        session_mgr.invalidate(session_key)
+                    raise
 
             sse_iter = iter_responses_sse(deltas=_deltas(), model=parsed.model)
             return StreamingResponse(
@@ -127,10 +244,13 @@ def create_app(client: AgentGatewayClient, *, default_model: str = "agent") -> F
                 headers={"Cache-Control": "no-cache"},
             )
         finally:
-            try:
-                client.delete_session(session_id)
-            except Exception:
-                pass
+            if delete_on_finish:
+                try:
+                    client.delete_session(session_id)
+                except Exception:
+                    pass
+            elif close_after and session_mgr:
+                session_mgr.invalidate(session_key)
 
     @app.exception_handler(AgentGatewayError)
     async def _handle_gateway_error(_req: Request, exc: AgentGatewayError) -> JSONResponse:
@@ -157,13 +277,14 @@ def main() -> None:
     parser.add_argument("--api-txt", default="api.txt", help="Path to api.txt (key/agentCode/agentVersion)")
     parser.add_argument("--base-url", default=None, help="Override gateway base url")
     parser.add_argument("--default-model", default="agent", help="Default model name for /model and /v1/models")
+    parser.add_argument("--session-ttl", default=600, type=int, help="Session idle TTL seconds (0=disable reuse)")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", default=8000, type=int)
     parser.add_argument("--log-level", default="info", choices=["critical", "error", "warning", "info", "debug"])
     args = parser.parse_args()
 
     client = _load_client(args.api_txt, args.base_url)
-    app = create_app(client, default_model=args.default_model)
+    app = create_app(client, default_model=args.default_model, session_ttl_s=args.session_ttl)
 
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 

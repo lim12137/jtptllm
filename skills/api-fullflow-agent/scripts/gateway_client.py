@@ -48,10 +48,12 @@ class AgentGatewayClient:
         config: ApiConfig,
         *,
         timeout_s: float = 120.0,
+        stream_read_timeout_s: Optional[float] = None,
         session: Optional[requests.Session] = None,
     ) -> None:
         self._cfg = config
         self._timeout_s = timeout_s
+        self._stream_read_timeout_s = stream_read_timeout_s
         self._http = session or requests.Session()
 
     @property
@@ -172,11 +174,12 @@ class AgentGatewayClient:
                 raise AgentGatewayError(f"run HTTP {r.status_code}: {r.text}", response=r)
             return _safe_json(r)
 
+        stream_timeout = (self._timeout_s, self._stream_read_timeout_s)
         r = self._http.post(
             url,
             headers=self._headers(accept_stream=True),
             json=payload,
-            timeout=self._timeout_s,
+            timeout=stream_timeout,
             stream=True,
         )
         if r.status_code >= 400:
