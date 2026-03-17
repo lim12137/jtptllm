@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/lim12137/jtptllm/internal/gateway"
@@ -17,6 +20,9 @@ type stubGateway struct {
 	deleteCount int
 	lastRun     gateway.RunRequest
 	runResp     map[string]any
+	runErr      error
+	streamResp  *http.Response
+	streamErr   error
 }
 
 func (s *stubGateway) CreateSession(ctx context.Context) (string, error) {
@@ -26,7 +32,10 @@ func (s *stubGateway) CreateSession(ctx context.Context) (string, error) {
 
 func (s *stubGateway) Run(ctx context.Context, req gateway.RunRequest) (*http.Response, map[string]any, error) {
 	s.lastRun = req
-	return nil, s.runResp, nil
+	if req.Stream {
+		return s.streamResp, nil, s.streamErr
+	}
+	return nil, s.runResp, s.runErr
 }
 
 func (s *stubGateway) DeleteSession(ctx context.Context, sessionID string) error {
@@ -50,6 +59,9 @@ func TestHealth(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("cors header missing")
+	}
+	if v := rec.Header().Get("Access-Control-Allow-Credentials"); v != "" {
+		t.Fatalf("allow-credentials=%q", v)
 	}
 	var body map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -175,5 +187,38 @@ func TestResponsesNonStream(t *testing.T) {
 	}
 	if out["output_text"] != "回应" {
 		t.Fatalf("output_text=%v", out["output_text"])
+	}
+}
+
+type errReader struct {
+	err error
+}
+
+func (e *errReader) Read(_ []byte) (int, error) {
+	return 0, e.err
+}
+
+func TestStreamErrorDoesNotWriteJSON(t *testing.T) {
+	gw := &stubGateway{
+		streamResp: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(&errReader{err: errors.New("boom")}),
+		},
+	}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"stream":   true,
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if strings.Contains(rec.Body.String(), "\"error\"") {
+		t.Fatalf("unexpected json error in sse stream: %s", rec.Body.String())
 	}
 }

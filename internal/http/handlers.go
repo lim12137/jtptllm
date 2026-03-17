@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	stdhttp "net/http"
@@ -135,7 +136,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 	defer resp.Body.Close()
 	if err := streamChatCompletion(w, resp.Body, parsed.Model); err != nil {
-		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+		log.Printf("stream chat completions error: %v", err)
 		return
 	}
 }
@@ -191,7 +192,7 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	defer resp.Body.Close()
 	if err := streamResponses(w, resp.Body, parsed.Model); err != nil {
-		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+		log.Printf("stream responses error: %v", err)
 		return
 	}
 }
@@ -243,7 +244,6 @@ func withCORS(next stdhttp.Handler) stdhttp.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		if r.Method == stdhttp.MethodOptions {
 			w.WriteHeader(stdhttp.StatusNoContent)
 			return
