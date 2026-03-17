@@ -290,3 +290,66 @@ func TestIOLoggingEnabled(t *testing.T) {
 		t.Fatalf("missing IOLOG")
 	}
 }
+
+func TestChatCompletionToolSentinelStreamBuffered(t *testing.T) {
+	streamText := "<<<TC>>>{\"tc\":[{\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
+	evt := map[string]any{
+		"data": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": map[string]any{"value": streamText}},
+			},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	sse := "data: " + string(b) + "\n\n" +
+		"data: [DONE]\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":  "agent",
+		"stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "get_weather",
+				"description": "Get weather",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"location": map[string]any{"type": "string"}},
+					"required":   []any{"location"},
+				},
+			},
+		}},
+		"tool_choice": map[string]any{"type": "function", "function": map[string]any{"name": "get_weather"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	choices, ok := out["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("choices empty")
+	}
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["tool_calls"] == nil {
+		t.Fatalf("missing tool_calls")
+	}
+}
+
