@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	stdhttp "net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -107,6 +108,16 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	defer s.finishSession(r.Context(), sessionID, deleteAfter, closeAfter, sessionKey)
+	logIO(map[string]any{
+		"dir":         "in",
+		"path":        r.URL.Path,
+		"stream":      parsed.Stream,
+		"session_id":  sessionID,
+		"session_key": sessionKey,
+		"model":       parsed.Model,
+		"payload":     payload,
+		"prompt":      parsed.Prompt,
+	})
 
 	if !parsed.Stream {
 		_, runResp, err := s.gateway.Run(r.Context(), gateway.RunRequest{
@@ -120,7 +131,18 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
-		writeJSON(w, stdhttp.StatusOK, openai.BuildChatCompletionResponse(text, parsed.Model))
+		respPayload := openai.BuildChatCompletionResponse(text, parsed.Model)
+		logIO(map[string]any{
+			"dir":         "out",
+			"path":        r.URL.Path,
+			"stream":      false,
+			"session_id":  sessionID,
+			"session_key": sessionKey,
+			"model":       parsed.Model,
+			"gateway":     runResp,
+			"output":      respPayload,
+		})
+		writeJSON(w, stdhttp.StatusOK, respPayload)
 		return
 	}
 
@@ -135,10 +157,20 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	defer resp.Body.Close()
-	if err := streamChatCompletion(w, resp.Body, parsed.Model); err != nil {
+	streamOutput, err := streamChatCompletion(w, resp.Body, parsed.Model)
+	if err != nil {
 		log.Printf("stream chat completions error: %v", err)
 		return
 	}
+	logIO(map[string]any{
+		"dir":           "out",
+		"path":          r.URL.Path,
+		"stream":        true,
+		"session_id":    sessionID,
+		"session_key":   sessionKey,
+		"model":         parsed.Model,
+		"stream_output": streamOutput,
+	})
 }
 
 func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -163,6 +195,16 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	defer s.finishSession(r.Context(), sessionID, deleteAfter, closeAfter, sessionKey)
+	logIO(map[string]any{
+		"dir":         "in",
+		"path":        r.URL.Path,
+		"stream":      parsed.Stream,
+		"session_id":  sessionID,
+		"session_key": sessionKey,
+		"model":       parsed.Model,
+		"payload":     payload,
+		"prompt":      parsed.Prompt,
+	})
 
 	if !parsed.Stream {
 		_, runResp, err := s.gateway.Run(r.Context(), gateway.RunRequest{
@@ -176,7 +218,18 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
-		writeJSON(w, stdhttp.StatusOK, openai.BuildResponsesResponse(text, parsed.Model))
+		respPayload := openai.BuildResponsesResponse(text, parsed.Model)
+		logIO(map[string]any{
+			"dir":         "out",
+			"path":        r.URL.Path,
+			"stream":      false,
+			"session_id":  sessionID,
+			"session_key": sessionKey,
+			"model":       parsed.Model,
+			"gateway":     runResp,
+			"output":      respPayload,
+		})
+		writeJSON(w, stdhttp.StatusOK, respPayload)
 		return
 	}
 
@@ -191,10 +244,20 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	if err := streamResponses(w, resp.Body, parsed.Model); err != nil {
+	streamOutput, err := streamResponses(w, resp.Body, parsed.Model)
+	if err != nil {
 		log.Printf("stream responses error: %v", err)
 		return
 	}
+	logIO(map[string]any{
+		"dir":           "out",
+		"path":          r.URL.Path,
+		"stream":        true,
+		"session_id":    sessionID,
+		"session_key":   sessionKey,
+		"model":         parsed.Model,
+		"stream_output": streamOutput,
+	})
 }
 
 func (s *Server) ensureSession(ctx context.Context, r *stdhttp.Request) (string, bool, bool, string, error) {
@@ -268,6 +331,34 @@ func writeJSON(w stdhttp.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func ioLogEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("PROXY_LOG_IO"))
+	if v == "" {
+		return false
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "y":
+		return true
+	default:
+		return false
+	}
+}
+
+func logIO(fields map[string]any) {
+	if !ioLogEnabled() {
+		return
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	b, err := json.Marshal(fields)
+	if err != nil {
+		log.Printf("IOLOG {\"error\":%q}", err.Error())
+		return
+	}
+	log.Printf("IOLOG %s", string(b))
 }
 
 func headerTruthy(r *stdhttp.Request, name string) bool {
@@ -398,10 +489,10 @@ func extractTextFromContentObj(content map[string]any) string {
 	return ""
 }
 
-func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string) error {
+func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string) (string, error) {
 	flusher, ok := w.(stdhttp.Flusher)
 	if !ok {
-		return errors.New("streaming not supported")
+		return "", errors.New("streaming not supported")
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -416,11 +507,13 @@ func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant"}, "finish_reason": nil}},
 	}
 	if _, err := io.WriteString(w, sseData(first)); err != nil {
-		return err
+		return "", err
 	}
 	flusher.Flush()
 
+	var full strings.Builder
 	if err := streamGatewayDeltas(body, func(delta string) error {
+		full.WriteString(delta)
 		chunk := map[string]any{
 			"id":      chatID,
 			"object":  "chat.completion.chunk",
@@ -434,7 +527,7 @@ func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string
 		flusher.Flush()
 		return nil
 	}); err != nil {
-		return err
+		return full.String(), err
 	}
 
 	final := map[string]any{
@@ -445,19 +538,19 @@ func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
 	}
 	if _, err := io.WriteString(w, sseData(final)); err != nil {
-		return err
+		return full.String(), err
 	}
 	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
-		return err
+		return full.String(), err
 	}
 	flusher.Flush()
-	return nil
+	return full.String(), nil
 }
 
-func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) error {
+func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) (string, error) {
 	flusher, ok := w.(stdhttp.Flusher)
 	if !ok {
-		return errors.New("streaming not supported")
+		return "", errors.New("streaming not supported")
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -466,11 +559,13 @@ func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) err
 	respID := newID("resp")
 	createdEvt := map[string]any{"type": "response.created", "response": map[string]any{"id": respID, "model": model, "created_at": created}}
 	if _, err := io.WriteString(w, sseData(createdEvt)); err != nil {
-		return err
+		return "", err
 	}
 	flusher.Flush()
 
+	var full strings.Builder
 	if err := streamGatewayDeltas(body, func(delta string) error {
+		full.WriteString(delta)
 		chunk := map[string]any{"type": "response.output_text.delta", "delta": delta, "response_id": respID}
 		if _, err := io.WriteString(w, sseData(chunk)); err != nil {
 			return err
@@ -478,18 +573,18 @@ func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) err
 		flusher.Flush()
 		return nil
 	}); err != nil {
-		return err
+		return full.String(), err
 	}
 
 	doneEvt := map[string]any{"type": "response.completed", "response_id": respID}
 	if _, err := io.WriteString(w, sseData(doneEvt)); err != nil {
-		return err
+		return full.String(), err
 	}
 	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
-		return err
+		return full.String(), err
 	}
 	flusher.Flush()
-	return nil
+	return full.String(), nil
 }
 
 func streamGatewayDeltas(body io.Reader, emit func(string) error) error {

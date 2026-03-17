@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -220,5 +222,34 @@ func TestStreamErrorDoesNotWriteJSON(t *testing.T) {
 
 	if strings.Contains(rec.Body.String(), "\"error\"") {
 		t.Fatalf("unexpected json error in sse stream: %s", rec.Body.String())
+	}
+}
+
+func TestIOLoggingEnabled(t *testing.T) {
+	buf := &bytes.Buffer{}
+	old := log.Writer()
+	log.SetOutput(buf)
+	defer log.SetOutput(old)
+	os.Setenv("PROXY_LOG_IO", "1")
+	defer os.Unsetenv("PROXY_LOG_IO")
+
+	gw := &stubGateway{runResp: map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{"text": "ok"},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if !strings.Contains(buf.String(), "IOLOG") {
+		t.Fatalf("missing IOLOG")
 	}
 }
