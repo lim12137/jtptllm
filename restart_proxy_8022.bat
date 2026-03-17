@@ -11,6 +11,6 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":%PORT% "') do (
 )
 
 echo Starting proxy on port %PORT%...
-start "openai-proxy-%PORT%" python "%SCRIPT%" --api-txt "%API_TXT%" --port %PORT%
+start "openai-proxy-%PORT%" python "%SCRIPT%" --api-txt "%API_TXT%" --host 0.0.0.0 --port %PORT%
 
 endlocal
