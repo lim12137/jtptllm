@@ -1,0 +1,13 @@
+.git
+.worktrees
+worktrees
+.github
+.golutra
+.pytest_cache
+pdf_images
+skills
+docs
+*.pdf
+*.log
+*.err
+*.bat
