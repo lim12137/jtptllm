@@ -1,5 +1,5 @@
 # Repository Guidelines
-
+用子代理执行具体任务，主代理分析任务要求及任务结果，做调度和分发工作，子代理用gpt-5.4-mini 模型
 ## Project Structure & Module Organization
 - `cmd/proxy/main.go`: application entrypoint, starts the HTTP proxy server.
 - `internal/config`: parses `api.txt` and runtime config.

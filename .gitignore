@@ -14,3 +14,25 @@ api.txt
 pdf_images/
 proxy_8022.log
 proxy_8022.err
+
+# Local tool state / scratch files (do not commit)
+.gitconfig
+$null
+result.txt
+
+# Local command payloads / test scratch
+cmd.json
+abs_cmd.json
+final_cmd.json
+simple_cmd.json
+temp_cmd.json
+send_cmd.json
+test_cmd.json
+*_cmd.json
+test.json
+
+# Local agent tool state (keep repo-visible docs separate)
+.golutra/local.json
+.golutra/workspace.json
+.golutra/agents/history.md
+.golutra/agents/agent-issue-log.md
