@@ -32,11 +32,11 @@ type Options struct {
 
 type Server struct {
 	gateway      Gateway
-	sessions     *session.Manager
+	sessions     *session.PoolManager
 	defaultModel string
 }
 
-func NewServer(gateway Gateway, sessions *session.Manager, opts Options) *Server {
+func NewServer(gateway Gateway, sessions *session.PoolManager, opts Options) *Server {
 	model := strings.TrimSpace(opts.DefaultModel)
 	if model == "" {
 		model = "agent"
@@ -103,12 +103,12 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 
-	sessionID, deleteAfter, closeAfter, sessionKey, err := s.ensureSession(r.Context(), r)
+	sessionID, release, closeAfter, sessionKey, err := s.ensureSession(r.Context(), r)
 	if err != nil {
 		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
-	defer s.finishSession(r.Context(), sessionID, deleteAfter, closeAfter, sessionKey)
+	defer func() { release(closeAfter) }()
 	logIO(map[string]any{
 		"dir":         "in",
 		"path":        r.URL.Path,
@@ -224,12 +224,12 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 
-	sessionID, deleteAfter, closeAfter, sessionKey, err := s.ensureSession(r.Context(), r)
+	sessionID, release, closeAfter, sessionKey, err := s.ensureSession(r.Context(), r)
 	if err != nil {
 		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
-	defer s.finishSession(r.Context(), sessionID, deleteAfter, closeAfter, sessionKey)
+	defer func() { release(closeAfter) }()
 	logIO(map[string]any{
 		"dir":         "in",
 		"path":        r.URL.Path,
@@ -327,46 +327,28 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	})
 }
 
-func (s *Server) ensureSession(ctx context.Context, r *stdhttp.Request) (string, bool, bool, string, error) {
+func (s *Server) ensureSession(ctx context.Context, r *stdhttp.Request) (string, func(bool), bool, string, error) {
 	if s.gateway == nil {
-		return "", false, false, "", errors.New("gateway client not configured")
+		return "", func(bool) {}, false, "", errors.New("gateway client not configured")
 	}
 	forceNew := headerTruthy(r, "x-agent-session-reset")
 	closeAfter := headerTruthy(r, "x-agent-session-close")
 	if s.sessions == nil {
 		sessionID, err := s.gateway.CreateSession(ctx)
-		return sessionID, true, closeAfter, "", err
+		release := func(close bool) {
+			_ = s.gateway.DeleteSession(ctx, sessionID)
+		}
+		return sessionID, release, closeAfter, "", err
 	}
 	key := sessionKey(r)
-	var sessionID string
-	if !forceNew {
-		sessionID = s.sessions.Get(key)
+	lease, err := s.sessions.Acquire(ctx, key, forceNew)
+	if err != nil {
+		return "", func(bool) {}, closeAfter, key, err
 	}
-	if sessionID == "" {
-		created, err := s.gateway.CreateSession(ctx)
-		if err != nil {
-			return "", false, closeAfter, key, err
-		}
-		s.sessions.Set(key, created)
-		sessionID = created
-	} else {
-		s.sessions.Set(key, sessionID)
+	release := func(close bool) {
+		lease.Release(ctx, close)
 	}
-	return sessionID, false, closeAfter, key, nil
-}
-
-func (s *Server) finishSession(ctx context.Context, sessionID string, deleteAfter bool, closeAfter bool, sessionKey string) {
-	if sessionID == "" || s.gateway == nil {
-		return
-	}
-	if deleteAfter {
-		_ = s.gateway.DeleteSession(ctx, sessionID)
-		return
-	}
-	if closeAfter && s.sessions != nil {
-		s.sessions.Invalidate(sessionKey)
-		_ = s.gateway.DeleteSession(ctx, sessionID)
-	}
+	return lease.SessionID(), release, closeAfter, key, nil
 }
 
 func withCORS(next stdhttp.Handler) stdhttp.Handler {

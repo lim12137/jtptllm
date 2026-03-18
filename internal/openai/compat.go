@@ -210,18 +210,18 @@ func BuildResponsesResponseFromText(text string, model string) map[string]any {
 	output := make([]any, 0, len(parsed.ToolCalls))
 	for _, call := range parsed.ToolCalls {
 		output = append(output, map[string]any{
-			"type":       "function_call",
-			"call_id":    call.ID,
-			"name":       call.Name,
-			"arguments":  call.Arguments,
+			"type":      "function_call",
+			"call_id":   call.ID,
+			"name":      call.Name,
+			"arguments": call.Arguments,
 		})
 	}
 	return map[string]any{
-		"id":         rid,
-		"object":     "response",
-		"created_at": created,
-		"model":      model,
-		"output":     output,
+		"id":          rid,
+		"object":      "response",
+		"created_at":  created,
+		"model":       model,
+		"output":      output,
 		"output_text": content,
 	}
 }
@@ -420,7 +420,7 @@ func ParseToolSentinel(text string) ToolParseResult {
 	raw := text[start+len("<<<TC>>>") : end]
 	var payload struct {
 		TC []map[string]any `json:"tc"`
-		C  any             `json:"c"`
+		C  any              `json:"c"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return ToolParseResult{Content: strings.TrimSpace(text)}

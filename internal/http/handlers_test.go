@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -29,7 +30,7 @@ type stubGateway struct {
 
 func (s *stubGateway) CreateSession(ctx context.Context) (string, error) {
 	s.createCount++
-	return "s1", nil
+	return fmt.Sprintf("s%d", s.createCount), nil
 }
 
 func (s *stubGateway) Run(ctx context.Context, req gateway.RunRequest) (*http.Response, map[string]any, error) {
@@ -46,7 +47,12 @@ func (s *stubGateway) DeleteSession(ctx context.Context, sessionID string) error
 }
 
 func newTestServer(gw Gateway) *Server {
-	return NewServer(gw, session.NewManager(600), Options{DefaultModel: "agent"})
+	var pools *session.PoolManager
+	if gw != nil {
+		// Use pool size=1 to keep tests deterministic.
+		pools = session.NewPoolManager(gw, 600, 1)
+	}
+	return NewServer(gw, pools, Options{DefaultModel: "agent"})
 }
 
 func TestHealth(t *testing.T) {
@@ -313,8 +319,8 @@ func TestChatCompletionToolSentinelStreamBuffered(t *testing.T) {
 	srv := newTestServer(gw)
 
 	payload := map[string]any{
-		"model":  "agent",
-		"stream": true,
+		"model":    "agent",
+		"stream":   true,
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 		"tools": []any{map[string]any{
 			"type": "function",
@@ -350,4 +356,3 @@ func TestChatCompletionToolSentinelStreamBuffered(t *testing.T) {
 		t.Fatalf("missing DONE in sse body: %s", bodyText)
 	}
 }
-
