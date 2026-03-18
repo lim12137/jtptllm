@@ -98,6 +98,67 @@ func TestToolSystemPrefixIncludesProtocol(t *testing.T) {
 	}
 }
 
+func TestToolSystemPrefixAutoDoesNotForceToolCall(t *testing.T) {
+	payload := map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":       "get_weather",
+				"parameters": map[string]any{"type": "object"},
+			},
+		}},
+		"tool_choice": "auto",
+	}
+	parsed := ParseChatRequest(payload)
+	if !strings.Contains(parsed.Prompt, "tc_protocol") {
+		t.Fatalf("missing tc_protocol")
+	}
+	if strings.Contains(parsed.Prompt, "必须使用 tc_protocol") {
+		t.Fatalf("tool_choice=auto should not force tool call: %q", parsed.Prompt)
+	}
+}
+
+func TestToolSystemPrefixWithoutChoiceDoesNotForceToolCall(t *testing.T) {
+	payload := map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":       "get_weather",
+				"parameters": map[string]any{"type": "object"},
+			},
+		}},
+	}
+	parsed := ParseChatRequest(payload)
+	if !strings.Contains(parsed.Prompt, "tc_protocol") {
+		t.Fatalf("missing tc_protocol")
+	}
+	if strings.Contains(parsed.Prompt, "必须使用 tc_protocol") {
+		t.Fatalf("missing tool_choice should not force tool call: %q", parsed.Prompt)
+	}
+}
+
+func TestLegacyFunctionCallNamedChoiceForcesSpecificTool(t *testing.T) {
+	payload := map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"functions": []any{
+			map[string]any{
+				"name":       "get_weather",
+				"parameters": map[string]any{"type": "object"},
+			},
+		},
+		"function_call": map[string]any{"name": "get_weather"},
+	}
+	parsed := ParseChatRequest(payload)
+	if !strings.Contains(parsed.Prompt, "get_weather") {
+		t.Fatalf("missing named tool choice")
+	}
+	if !strings.Contains(parsed.Prompt, "必须使用 tc_protocol") {
+		t.Fatalf("named function_call should force protocol output: %q", parsed.Prompt)
+	}
+}
+
 func TestToolSystemPrefixNotInjectedWithoutTools(t *testing.T) {
 	payload := map[string]any{
 		"messages":    []any{map[string]any{"role": "user", "content": "hi"}},

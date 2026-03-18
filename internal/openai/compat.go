@@ -768,15 +768,21 @@ func buildToolSystemPrefix(tools []map[string]any, choice string) string {
 	if len(tools) == 0 {
 		return ""
 	}
+	trimmedChoice := strings.TrimSpace(choice)
 	payload := map[string]any{}
 	payload["tools"] = tools
-	if strings.TrimSpace(choice) != "" {
+	if trimmedChoice != "" {
 		payload["tool_choice"] = choice
 	}
 	payload["tc_protocol"] = "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"tool_name\",\"a\":{}}],\"c\":\"\"}<<<END>>>"
-	payload["tc_instruction"] = "必须使用 tc_protocol 格式输出工具调用；不要输出自然语言；c 可为空。"
-	if strings.EqualFold(strings.TrimSpace(choice), "none") {
+	switch {
+	case trimmedChoice == "", strings.EqualFold(trimmedChoice, "auto"):
+		payload["tc_instruction"] = "如需调用工具，使用 tc_protocol 格式输出；若无需调用工具，直接输出自然语言。"
+	case strings.EqualFold(trimmedChoice, "none"):
+		payload["tc_instruction"] = "不要调用工具；直接输出自然语言。"
 		payload["tc_forbid"] = true
+	default:
+		payload["tc_instruction"] = "必须使用 tc_protocol 格式输出工具调用；不要输出自然语言；c 可为空。"
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
