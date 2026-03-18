@@ -13,9 +13,7 @@ Invoke-WebRequest http://127.0.0.1:8022/health -UseBasicParsing
 
 ## Results
 
-- Tests: FAIL
-  - `internal/http`: `TestModelEndpoints` failed
-  - `internal/openai`: `TestParseChatRequestInjectsModelFast`, `TestParseChatRequestReplacesExistingMarker`, `TestParseResponsesRequestInjectsModelDeepseek` failed
+- Tests: PASS
 - Build: PASS (created `bin\proxy.exe`)
 - Restart script: PASS (exit code 0)
 - Health check: PASS (`HTTP 200`, body `{"ok":true}`)
