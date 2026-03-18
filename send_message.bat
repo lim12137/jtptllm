@@ -1,0 +1,1 @@
+@echo off & chcp 65001 >nul & "D:\Program Files\Agents\golutra-cli.exe" run --workspace-path . --conversation 01KKX4SP76YR12Q0WXDGB0KBBH --sender 01KKX5KWERGRASYMDPX0ET3TH0 --mention 01KKX5MCJ9PEKKR6J05R6QDVFX --text "OpenAI Function Calling Καΐν" > result.txt 2>&1 

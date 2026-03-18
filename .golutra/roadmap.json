@@ -1,0 +1,42 @@
+{
+  "_roadmapMeta": {
+    "updatedAt": 1773730267401
+  },
+  "roadmap": {
+    "objective": "支持 OpenAI function/tool calls 的输入/输出转换",
+    "tasks": [
+      {
+        "id": 1,
+        "number": "01",
+        "pinned": true,
+        "sortOrder": 1,
+        "status": "in-progress",
+        "title": "明确文本协议与兼容范围"
+      },
+      {
+        "id": 2,
+        "number": "02",
+        "pinned": false,
+        "sortOrder": 2,
+        "status": "pending",
+        "title": "实现输入侧转换（OpenAI -> 纯文本）"
+      },
+      {
+        "id": 3,
+        "number": "03",
+        "pinned": false,
+        "sortOrder": 3,
+        "status": "pending",
+        "title": "实现输出侧解析（纯文本 -> tool_calls/function_call）"
+      },
+      {
+        "id": 4,
+        "number": "04",
+        "pinned": false,
+        "sortOrder": 4,
+        "status": "pending",
+        "title": "测试与文档更新"
+      }
+    ]
+  }
+}
