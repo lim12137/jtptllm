@@ -40,3 +40,11 @@ Tool-call **not stable / not triggered** in this smoke run. The proxy forwarded 
 - Result: **502 Bad Gateway** (upstream `/agent/api/run` still returns 500).
 - IOLOG confirms `tc_protocol` injected in system prefix.
 - Fallback parsing was **not exercised** because upstream did not return a response body.
+
+## Run 3 (after name/arguments fallback + gated system prefix)
+- Rebuilt `bin/proxy.exe` after adding `name/arguments` fallback and gating system prefix to tools-only.
+- Proxy started with `PROXY_LOG_IO=1`.
+- Command: `powershell -File scripts/codex_toolcall_smoke.ps1`
+- Result: **200 OK** for both endpoints, tool_calls/function_call generated.
+  - `/v1/chat/completions`: `tool_calls` present, `finish_reason=tool_calls`.
+  - `/v1/responses`: `output` contains `function_call` item.
