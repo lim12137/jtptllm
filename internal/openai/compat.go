@@ -135,8 +135,8 @@ func BuildChatCompletionResponse(text string, model string) map[string]any {
 
 func BuildChatCompletionResponseFromText(text string, model string) map[string]any {
 	parsed := ParseToolSentinel(text)
-	content := parsed.Content
-	if strings.TrimSpace(content) == "" {
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" && len(parsed.ToolCalls) == 0 {
 		content = strings.TrimSpace(text)
 	}
 	if len(parsed.ToolCalls) == 0 {
@@ -198,8 +198,8 @@ func BuildResponsesResponse(text string, model string) map[string]any {
 
 func BuildResponsesResponseFromText(text string, model string) map[string]any {
 	parsed := ParseToolSentinel(text)
-	content := parsed.Content
-	if strings.TrimSpace(content) == "" {
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" && len(parsed.ToolCalls) == 0 {
 		content = strings.TrimSpace(text)
 	}
 	if len(parsed.ToolCalls) == 0 {
@@ -415,7 +415,7 @@ func ParseToolSentinel(text string) ToolParseResult {
 	start := strings.Index(text, "<<<TC>>>")
 	end := strings.Index(text, "<<<END>>>")
 	if start < 0 || end < 0 || end <= start+len("<<<TC>>>") {
-		return ToolParseResult{Content: strings.TrimSpace(text)}
+		return parseToolCallJSONBlock(text)
 	}
 	raw := text[start+len("<<<TC>>>") : end]
 	var payload struct {
@@ -457,6 +457,123 @@ func ParseToolSentinel(text string) ToolParseResult {
 		calls = append(calls, ToolCall{ID: id, Name: name, Arguments: argStr})
 	}
 	return ToolParseResult{ToolCalls: calls, Content: strings.TrimSpace(content), HasSentinel: true}
+}
+
+func parseToolCallJSONBlock(text string) ToolParseResult {
+	block, stripped, ok := extractFirstJSONBlock(text)
+	if !ok {
+		return ToolParseResult{Content: strings.TrimSpace(text)}
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(block), &payload); err != nil {
+		return ToolParseResult{Content: strings.TrimSpace(text)}
+	}
+	calls := parseToolCallsFromAny(payload)
+	if len(calls) == 0 {
+		return ToolParseResult{Content: strings.TrimSpace(text)}
+	}
+	return ToolParseResult{ToolCalls: calls, Content: strings.TrimSpace(stripped)}
+}
+
+func extractFirstJSONBlock(text string) (string, string, bool) {
+	lower := strings.ToLower(text)
+	start := strings.Index(lower, "```json")
+	if start < 0 {
+		return "", "", false
+	}
+	contentStart := start + len("```json")
+	end := strings.Index(lower[contentStart:], "```")
+	if end < 0 {
+		return "", "", false
+	}
+	block := strings.TrimSpace(text[contentStart : contentStart+end])
+	before := strings.TrimSpace(text[:start])
+	after := strings.TrimSpace(text[contentStart+end+3:])
+	if before == "" {
+		return block, after, true
+	}
+	if after == "" {
+		return block, before, true
+	}
+	return block, before + "\n" + after, true
+}
+
+func parseToolCallsFromAny(payload any) []ToolCall {
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if name, ok := m["toolName"].(string); ok && strings.TrimSpace(name) != "" {
+		id, _ := m["toolCallId"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = newID("call")
+		}
+		return []ToolCall{{
+			ID:        id,
+			Name:      name,
+			Arguments: normalizeArgs(m["arguments"]),
+		}}
+	}
+	if calls, ok := m["tool_calls"].([]any); ok {
+		out := make([]ToolCall, 0, len(calls))
+		for _, item := range calls {
+			call, ok := parseToolCallItem(item)
+			if ok {
+				out = append(out, call)
+			}
+		}
+		return out
+	}
+	if fc, ok := m["function_call"].(map[string]any); ok {
+		name, _ := fc["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			return nil
+		}
+		return []ToolCall{{
+			ID:        newID("call"),
+			Name:      name,
+			Arguments: normalizeArgs(fc["arguments"]),
+		}}
+	}
+	return nil
+}
+
+func parseToolCallItem(item any) (ToolCall, bool) {
+	m, ok := item.(map[string]any)
+	if !ok {
+		return ToolCall{}, false
+	}
+	fn, ok := m["function"].(map[string]any)
+	if !ok {
+		return ToolCall{}, false
+	}
+	name, _ := fn["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return ToolCall{}, false
+	}
+	id, _ := m["id"].(string)
+	if strings.TrimSpace(id) == "" {
+		id = newID("call")
+	}
+	return ToolCall{
+		ID:        id,
+		Name:      name,
+		Arguments: normalizeArgs(fn["arguments"]),
+	}, true
+}
+
+func normalizeArgs(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case nil:
+		return ""
+	default:
+		if b, err := json.Marshal(t); err == nil {
+			return string(b)
+		}
+		return ""
+	}
 }
 
 func buildChatToolCalls(calls []ToolCall) []any {

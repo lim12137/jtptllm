@@ -183,3 +183,48 @@ func TestParseToolSentinelFallbackToPlainText(t *testing.T) {
 		t.Fatalf("output_text=%v", out2["output_text"])
 	}
 }
+
+func TestParseToolSentinelFallbackJsonBlock(t *testing.T) {
+	text := "answer\n```json\n{\"toolCallId\":\"tools_01\",\"toolName\":\"get_weather\",\"arguments\":{\"location\":\"Paris\"}}\n```"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != "answer" {
+		t.Fatalf("content=%q", res.Content)
+	}
+	if res.ToolCalls[0].Name != "get_weather" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID != "tools_01" {
+		t.Fatalf("id=%q", res.ToolCalls[0].ID)
+	}
+}
+
+func TestParseToolSentinelFallbackToolCalls(t *testing.T) {
+	text := "prefix\n```json\n{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":{\"location\":\"Paris\"}}}]}\n```\n"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "get_weather" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID != "call_1" {
+		t.Fatalf("id=%q", res.ToolCalls[0].ID)
+	}
+}
+
+func TestParseToolSentinelFallbackFunctionCall(t *testing.T) {
+	text := "```json\n{\"function_call\":{\"name\":\"get_weather\",\"arguments\":{\"location\":\"Paris\"}}}\n```"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "get_weather" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID == "" {
+		t.Fatalf("id empty")
+	}
+}
