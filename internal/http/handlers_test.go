@@ -244,6 +244,94 @@ func TestResponsesNonStream(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsNonStreamUpstreamError(t *testing.T) {
+	gw := &stubGateway{runResp: map[string]any{
+		"data": map[string]any{
+			"error": map[string]any{
+				"content": map[string]any{
+					"errorMsg": "upstream failed",
+				},
+			},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	errObj, ok := out["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing error object")
+	}
+	if errObj["type"] != "upstream_error" {
+		t.Fatalf("type=%v", errObj["type"])
+	}
+	if errObj["code"] != "upstream_run_failed" {
+		t.Fatalf("code=%v", errObj["code"])
+	}
+	if msg, _ := errObj["message"].(string); !strings.Contains(msg, "upstream") {
+		t.Fatalf("message=%v", errObj["message"])
+	}
+}
+
+func TestResponsesNonStreamUpstreamError(t *testing.T) {
+	gw := &stubGateway{runResp: map[string]any{
+		"data": map[string]any{
+			"error": map[string]any{
+				"content": map[string]any{
+					"errorMsg": "upstream failed",
+				},
+			},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model": "agent",
+		"input": "hi",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	errObj, ok := out["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing error object")
+	}
+	if errObj["type"] != "upstream_error" {
+		t.Fatalf("type=%v", errObj["type"])
+	}
+	if errObj["code"] != "upstream_run_failed" {
+		t.Fatalf("code=%v", errObj["code"])
+	}
+	if msg, _ := errObj["message"].(string); !strings.Contains(msg, "upstream") {
+		t.Fatalf("message=%v", errObj["message"])
+	}
+}
+
 type errReader struct {
 	err error
 }

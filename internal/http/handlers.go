@@ -123,6 +123,10 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
+		if msg, ok := gatewayRunError(runResp); ok {
+			writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
+			return
+		}
 		text := extractGatewayTextFromNonStream(runResp)
 		respPayload := openai.BuildChatCompletionResponseFromText(text, parsed.Model)
 		logIO(map[string]any{
@@ -242,6 +246,10 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		})
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		if msg, ok := gatewayRunError(runResp); ok {
+			writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
@@ -436,6 +444,93 @@ func extractGatewayTextFromNonStream(runResp map[string]any) string {
 		return extractTextFromMessage(data)
 	}
 	return extractTextFromMessage(runResp)
+}
+
+func gatewayRunError(runResp map[string]any) (string, bool) {
+	if runResp == nil {
+		return "", false
+	}
+	if ok, has := runResp["success"].(bool); has && !ok {
+		if msg := extractGatewayErrorMessage(runResp); msg != "" {
+			return msg, true
+		}
+		return "upstream run failed", true
+	}
+	if msg := extractGatewayErrorMessage(runResp); msg != "" {
+		return msg, true
+	}
+	if data, ok := runResp["data"].(map[string]any); ok {
+		if _, has := data["error"]; has {
+			return "upstream run failed", true
+		}
+	}
+	return "", false
+}
+
+func extractGatewayErrorMessage(runResp map[string]any) string {
+	if runResp == nil {
+		return ""
+	}
+	if errObj, ok := runResp["error"].(map[string]any); ok {
+		if msg := extractErrorMessage(errObj); msg != "" {
+			return msg
+		}
+	}
+	if data, ok := runResp["data"].(map[string]any); ok {
+		if errObj, ok := data["error"].(map[string]any); ok {
+			if msg := extractErrorMessage(errObj); msg != "" {
+				return msg
+			}
+		}
+		if msg, ok := data["errorMsg"].(string); ok && strings.TrimSpace(msg) != "" {
+			return msg
+		}
+	}
+	if msg, ok := runResp["errorMsg"].(string); ok && strings.TrimSpace(msg) != "" {
+		return msg
+	}
+	return ""
+}
+
+func extractErrorMessage(errObj map[string]any) string {
+	if errObj == nil {
+		return ""
+	}
+	if msg, ok := errObj["message"].(string); ok && strings.TrimSpace(msg) != "" {
+		return msg
+	}
+	if msg, ok := errObj["errorMsg"].(string); ok && strings.TrimSpace(msg) != "" {
+		return msg
+	}
+	if content, ok := errObj["content"].(map[string]any); ok {
+		if msg, ok := content["errorMsg"].(string); ok && strings.TrimSpace(msg) != "" {
+			return msg
+		}
+		if msg, ok := content["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			return msg
+		}
+	}
+	if name, ok := errObj["errorName"].(string); ok && strings.TrimSpace(name) != "" {
+		return name
+	}
+	if code, ok := errObj["errorCode"].(string); ok && strings.TrimSpace(code) != "" {
+		return code
+	}
+	return ""
+}
+
+func openaiUpstreamError(message string) map[string]any {
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = "upstream run failed"
+	}
+	return map[string]any{
+		"error": map[string]any{
+			"message": msg,
+			"type":    "upstream_error",
+			"code":    "upstream_run_failed",
+		},
+	}
 }
 
 func extractGatewayTextDelta(evt map[string]any) string {
