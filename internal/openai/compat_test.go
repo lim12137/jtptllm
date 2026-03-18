@@ -112,6 +112,53 @@ func TestToolSystemPrefixNotInjectedWithoutTools(t *testing.T) {
 	}
 }
 
+func TestParseChatRequestInjectsModelFast(t *testing.T) {
+	payload := map[string]any{
+		"model":    "fast",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	parsed := ParseChatRequest(payload)
+	if !strings.HasPrefix(parsed.Prompt, "**model = fast**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
+func TestParseChatRequestReplacesExistingMarker(t *testing.T) {
+	payload := map[string]any{
+		"model":    "deepseek",
+		"messages": []any{map[string]any{"role": "user", "content": "**model = fast**\nhello"}},
+	}
+	parsed := ParseChatRequest(payload)
+	if strings.Contains(parsed.Prompt, "**model = fast**") {
+		t.Fatalf("old marker still present: %q", parsed.Prompt)
+	}
+	if !strings.HasPrefix(parsed.Prompt, "**model = deepseek**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
+func TestParseResponsesRequestInjectsModelDeepseek(t *testing.T) {
+	payload := map[string]any{
+		"model": "deepseek",
+		"input": "hi",
+	}
+	parsed := ParseResponsesRequest(payload)
+	if !strings.HasPrefix(parsed.Prompt, "**model = deepseek**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
+func TestParseResponsesRequestNoInjectionForOtherModel(t *testing.T) {
+	payload := map[string]any{
+		"model": "agent",
+		"input": "hi",
+	}
+	parsed := ParseResponsesRequest(payload)
+	if strings.Contains(parsed.Prompt, "**model =") {
+		t.Fatalf("unexpected marker: %q", parsed.Prompt)
+	}
+}
+
 func TestParseToolSentinelToChatResponse(t *testing.T) {
 	text := "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
 	res := ParseToolSentinel(text)

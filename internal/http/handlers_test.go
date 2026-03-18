@@ -86,15 +86,8 @@ func TestModelEndpoints(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/model", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNotFound {
 		t.Fatalf("/model status=%d", rec.Code)
-	}
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("/model decode: %v", err)
-	}
-	if body["model"] != "agent" {
-		t.Fatalf("model=%v", body["model"])
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -103,7 +96,7 @@ func TestModelEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/v1/models status=%d", rec.Code)
 	}
-	body = map[string]any{}
+	body := map[string]any{}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("/v1/models decode: %v", err)
 	}
@@ -111,8 +104,24 @@ func TestModelEndpoints(t *testing.T) {
 		t.Fatalf("object=%v", body["object"])
 	}
 	data, ok := body["data"].([]any)
-	if !ok || len(data) == 0 {
-		t.Fatalf("models empty")
+	if !ok {
+		t.Fatalf("models missing")
+	}
+	if len(data) != 2 {
+		t.Fatalf("models len=%d", len(data))
+	}
+	found := map[string]bool{}
+	for _, item := range data {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, ok := m["id"].(string); ok {
+			found[id] = true
+		}
+	}
+	if !found["fast"] || !found["deepseek"] {
+		t.Fatalf("models=%v", found)
 	}
 }
 

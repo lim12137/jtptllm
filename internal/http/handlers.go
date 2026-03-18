@@ -51,7 +51,6 @@ func NewServer(gateway Gateway, sessions *session.PoolManager, opts Options) *Se
 func (s *Server) Handler() stdhttp.Handler {
 	mux := stdhttp.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/model", s.handleModel)
 	mux.HandleFunc("/v1/models", s.handleModels)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
@@ -66,14 +65,6 @@ func (s *Server) handleHealth(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	writeJSON(w, stdhttp.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) handleModel(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if r.Method != stdhttp.MethodGet {
-		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
-		return
-	}
-	writeJSON(w, stdhttp.StatusOK, map[string]any{"model": s.defaultModel})
-}
-
 func (s *Server) handleModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if r.Method != stdhttp.MethodGet {
 		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
@@ -82,7 +73,8 @@ func (s *Server) handleModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	writeJSON(w, stdhttp.StatusOK, map[string]any{
 		"object": "list",
 		"data": []any{
-			map[string]any{"id": s.defaultModel, "object": "model"},
+			map[string]any{"id": "fast", "object": "model"},
+			map[string]any{"id": "deepseek", "object": "model"},
 		},
 	})
 }

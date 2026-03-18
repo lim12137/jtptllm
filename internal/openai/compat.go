@@ -3,10 +3,13 @@ package openai
 import (
 	"encoding/json"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
+
+var modelMarkerRe = regexp.MustCompile(`\*\*model\s*=\s*[^*]+\*\*`)
 
 type Message struct {
 	Role    string `json:"role"`
@@ -92,6 +95,7 @@ func ParseChatRequest(payload map[string]any) ParsedRequest {
 	tools := extractTools(payload)
 	choice := extractToolChoice(payload)
 	prefix := buildToolSystemPrefix(tools, choice)
+	prompt = injectModelMarker(model, prompt)
 	prompt = prependSystemPrefix(prefix, prompt)
 	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream, HasTools: len(tools) > 0}
 }
@@ -103,8 +107,25 @@ func ParseResponsesRequest(payload map[string]any) ParsedRequest {
 	tools := extractTools(payload)
 	choice := extractToolChoice(payload)
 	prefix := buildToolSystemPrefix(tools, choice)
+	prompt = injectModelMarker(model, prompt)
 	prompt = prependSystemPrefix(prefix, prompt)
 	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream, HasTools: len(tools) > 0}
+}
+
+func injectModelMarker(model string, prompt string) string {
+	m := strings.TrimSpace(model)
+	if m != "fast" && m != "deepseek" {
+		return prompt
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return prompt
+	}
+	cleaned := modelMarkerRe.ReplaceAllString(prompt, "")
+	cleaned = strings.TrimSpace(cleaned)
+	if cleaned == "" {
+		return "**model = " + m + "**"
+	}
+	return "**model = " + m + "**\n" + cleaned
 }
 
 func BuildChatCompletionResponse(text string, model string) map[string]any {
