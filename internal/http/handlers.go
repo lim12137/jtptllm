@@ -123,11 +123,13 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
-		if msg, ok := gatewayRunError(runResp); ok {
-			writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
-			return
-		}
 		text := extractGatewayTextFromNonStream(runResp)
+		if text == "" {
+			if msg, ok := gatewayRunError(runResp); ok {
+				writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
+				return
+			}
+		}
 		respPayload := openai.BuildChatCompletionResponseFromText(text, parsed.Model)
 		logIO(map[string]any{
 			"dir":         "out",
@@ -248,11 +250,13 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
-		if msg, ok := gatewayRunError(runResp); ok {
-			writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
-			return
-		}
 		text := extractGatewayTextFromNonStream(runResp)
+		if text == "" {
+			if msg, ok := gatewayRunError(runResp); ok {
+				writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
+				return
+			}
+		}
 		respPayload := openai.BuildResponsesResponseFromText(text, parsed.Model)
 		logIO(map[string]any{
 			"dir":         "out",

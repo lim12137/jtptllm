@@ -172,6 +172,52 @@ func TestChatCompletionsNonStream(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsNonStreamTreatsUsableTextAsSuccess(t *testing.T) {
+	gw := &stubGateway{runResp: map[string]any{
+		"success": false,
+		"data": map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": map[string]any{"value": "tiny ok"}},
+				},
+			},
+			"error": map[string]any{
+				"content": map[string]any{
+					"errorMsg": "upstream failed",
+				},
+			},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	choices, ok := out["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("choices empty")
+	}
+	first, _ := choices[0].(map[string]any)
+	msg, _ := first["message"].(map[string]any)
+	if msg["content"] != "tiny ok" {
+		t.Fatalf("content=%v", msg["content"])
+	}
+}
+
 func TestChatCompletionToolSentinelMapping(t *testing.T) {
 	gw := &stubGateway{runResp: map[string]any{
 		"data": map[string]any{
@@ -240,6 +286,46 @@ func TestResponsesNonStream(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if out["output_text"] != "回应" {
+		t.Fatalf("output_text=%v", out["output_text"])
+	}
+}
+
+func TestResponsesNonStreamTreatsUsableTextAsSuccess(t *testing.T) {
+	gw := &stubGateway{runResp: map[string]any{
+		"success": false,
+		"data": map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": map[string]any{"value": "回应 ok"}},
+				},
+			},
+			"error": map[string]any{
+				"content": map[string]any{
+					"errorMsg": "upstream failed",
+				},
+			},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model": "agent",
+		"input": "hi",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out["output_text"] != "回应 ok" {
 		t.Fatalf("output_text=%v", out["output_text"])
 	}
 }
