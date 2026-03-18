@@ -259,3 +259,20 @@ func TestParseToolSentinelFallbackFunctionCall(t *testing.T) {
 		t.Fatalf("id empty")
 	}
 }
+
+func TestParseToolSentinelFallbackActionToolInput(t *testing.T) {
+	text := "answer\n```json\n{\"action\":\"call_tool\",\"tool\":\"mcp__kqSse__checkLoginStatus\",\"input\":{}}\n```"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != "answer" {
+		t.Fatalf("content=%q", res.Content)
+	}
+	if res.ToolCalls[0].Name != "mcp__kqSse__checkLoginStatus" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID == "" {
+		t.Fatalf("id empty")
+	}
+}

@@ -514,6 +514,21 @@ func parseToolCallsFromAny(payload any) []ToolCall {
 			Arguments: normalizeArgs(m["arguments"]),
 		}}
 	}
+	if action, ok := m["action"].(string); ok && strings.EqualFold(strings.TrimSpace(action), "call_tool") {
+		tool, _ := m["tool"].(string)
+		if strings.TrimSpace(tool) == "" {
+			return nil
+		}
+		id, _ := m["toolCallId"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = newID("call")
+		}
+		return []ToolCall{{
+			ID:        id,
+			Name:      tool,
+			Arguments: normalizeArgs(m["input"]),
+		}}
+	}
 	if name, ok := m["toolName"].(string); ok && strings.TrimSpace(name) != "" {
 		id, _ := m["toolCallId"].(string)
 		if strings.TrimSpace(id) == "" {
