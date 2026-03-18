@@ -95,6 +95,20 @@ func TestToolSystemPrefixIncludesProtocol(t *testing.T) {
 	}
 }
 
+func TestToolSystemPrefixNotInjectedWithoutTools(t *testing.T) {
+	payload := map[string]any{
+		"messages":    []any{map[string]any{"role": "user", "content": "hi"}},
+		"tool_choice": "auto",
+	}
+	parsed := ParseChatRequest(payload)
+	if strings.Contains(parsed.Prompt, "tc_protocol") {
+		t.Fatalf("unexpected tc_protocol")
+	}
+	if parsed.Prompt != "user: hi" {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
 func TestParseToolSentinelToChatResponse(t *testing.T) {
 	text := "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
 	res := ParseToolSentinel(text)
@@ -198,6 +212,23 @@ func TestParseToolSentinelFallbackJsonBlock(t *testing.T) {
 	}
 	if res.ToolCalls[0].ID != "tools_01" {
 		t.Fatalf("id=%q", res.ToolCalls[0].ID)
+	}
+}
+
+func TestParseToolSentinelFallbackNameArguments(t *testing.T) {
+	text := "answer\n```json\n{\"name\":\"mcp__skillsServer__listSkills\",\"arguments\":{}}\n```"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != "answer" {
+		t.Fatalf("content=%q", res.Content)
+	}
+	if res.ToolCalls[0].Name != "mcp__skillsServer__listSkills" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID == "" {
+		t.Fatalf("id empty")
 	}
 }
 

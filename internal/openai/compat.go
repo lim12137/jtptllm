@@ -503,6 +503,17 @@ func parseToolCallsFromAny(payload any) []ToolCall {
 	if !ok {
 		return nil
 	}
+	if name, ok := m["name"].(string); ok && strings.TrimSpace(name) != "" {
+		id, _ := m["toolCallId"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = newID("call")
+		}
+		return []ToolCall{{
+			ID:        id,
+			Name:      name,
+			Arguments: normalizeArgs(m["arguments"]),
+		}}
+	}
 	if name, ok := m["toolName"].(string); ok && strings.TrimSpace(name) != "" {
 		id, _ := m["toolCallId"].(string)
 		if strings.TrimSpace(id) == "" {
@@ -718,13 +729,11 @@ func toolChoiceName(v any) string {
 }
 
 func buildToolSystemPrefix(tools []map[string]any, choice string) string {
-	if len(tools) == 0 && strings.TrimSpace(choice) == "" {
+	if len(tools) == 0 {
 		return ""
 	}
 	payload := map[string]any{}
-	if len(tools) > 0 {
-		payload["tools"] = tools
-	}
+	payload["tools"] = tools
 	if strings.TrimSpace(choice) != "" {
 		payload["tool_choice"] = choice
 	}
