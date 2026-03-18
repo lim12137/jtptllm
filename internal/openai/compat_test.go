@@ -90,6 +90,9 @@ func TestToolSystemPrefixIncludesProtocol(t *testing.T) {
 	if !strings.Contains(parsed.Prompt, "tc_protocol") {
 		t.Fatalf("missing tc_protocol")
 	}
+	if !strings.Contains(parsed.Prompt, "tc_instruction") {
+		t.Fatalf("missing tc_instruction")
+	}
 	if !strings.Contains(parsed.Prompt, "tc_forbid") {
 		t.Fatalf("missing tc_forbid")
 	}

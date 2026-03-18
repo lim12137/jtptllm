@@ -753,6 +753,7 @@ func buildToolSystemPrefix(tools []map[string]any, choice string) string {
 		payload["tool_choice"] = choice
 	}
 	payload["tc_protocol"] = "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"tool_name\",\"a\":{}}],\"c\":\"\"}<<<END>>>"
+	payload["tc_instruction"] = "必须使用 tc_protocol 格式输出工具调用；不要输出自然语言；c 可为空。"
 	if strings.EqualFold(strings.TrimSpace(choice), "none") {
 		payload["tc_forbid"] = true
 	}
