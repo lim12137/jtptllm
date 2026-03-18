@@ -32,3 +32,11 @@ Tool-call **not stable / not triggered** in this smoke run. The proxy forwarded 
 - Upstream model/tool-calling capability.
 - Protocol agreement (sentinel/JSON wrapper not present in outputs).
 - Whether tools should be enforced in upstream system.
+
+## Run 2 (after toolcall fallback enhancements)
+- Rebuilt `bin/proxy.exe` after adding `tc_protocol` + JSON codeblock fallback.
+- Proxy started with `PROXY_LOG_IO=1`.
+- Command: `powershell -File scripts/codex_toolcall_smoke.ps1`
+- Result: **502 Bad Gateway** (upstream `/agent/api/run` still returns 500).
+- IOLOG confirms `tc_protocol` injected in system prefix.
+- Fallback parsing was **not exercised** because upstream did not return a response body.
