@@ -339,17 +339,15 @@ func TestChatCompletionToolSentinelStreamBuffered(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	var out map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
-		t.Fatalf("decode: %v", err)
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("content-type=%q", ct)
 	}
-	choices, ok := out["choices"].([]any)
-	if !ok || len(choices) == 0 {
-		t.Fatalf("choices empty")
+	bodyText := rec.Body.String()
+	if !strings.Contains(bodyText, "\"tool_calls\"") {
+		t.Fatalf("missing tool_calls in sse body: %s", bodyText)
 	}
-	msg := choices[0].(map[string]any)["message"].(map[string]any)
-	if msg["tool_calls"] == nil {
-		t.Fatalf("missing tool_calls")
+	if !strings.Contains(bodyText, "[DONE]") {
+		t.Fatalf("missing DONE in sse body: %s", bodyText)
 	}
 }
 

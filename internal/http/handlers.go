@@ -11,6 +11,7 @@ import (
 	"net"
 	stdhttp "net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,7 +175,9 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			"stream_output": streamText,
 			"output":        respPayload,
 		})
-		writeJSON(w, stdhttp.StatusOK, respPayload)
+		if err := streamChatCompletionFromResponse(w, respPayload); err != nil {
+			log.Printf("stream chat completions error: %v", err)
+		}
 		return
 	}
 
@@ -611,6 +614,89 @@ func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string
 	return full.String(), nil
 }
 
+func streamChatCompletionFromResponse(w stdhttp.ResponseWriter, resp map[string]any) error {
+	flusher, ok := w.(stdhttp.Flusher)
+	if !ok {
+		return errors.New("streaming not supported")
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	id := stringValue(resp["id"])
+	if id == "" {
+		id = "chatcmpl_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	model := stringValue(resp["model"])
+	if strings.TrimSpace(model) == "" {
+		model = "agent"
+	}
+	created := time.Now().Unix()
+	if v, ok := resp["created"].(float64); ok {
+		created = int64(v)
+	} else if v, ok := resp["created"].(int64); ok {
+		created = v
+	}
+
+	msg := firstChoiceMessage(resp)
+	if msg == nil {
+		return errors.New("missing message")
+	}
+	if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
+		toolCalls := make([]any, 0, len(calls))
+		for i, raw := range calls {
+			call, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			fn, _ := call["function"].(map[string]any)
+			toolCalls = append(toolCalls, map[string]any{
+				"index": i,
+				"id":    call["id"],
+				"type":  "function",
+				"function": map[string]any{
+					"name":      stringValue(fn["name"]),
+					"arguments": stringValue(fn["arguments"]),
+				},
+			})
+		}
+		chunk := map[string]any{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   model,
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": toolCalls}, "finish_reason": nil}},
+		}
+		if _, err := io.WriteString(w, sseData(chunk)); err != nil {
+			return err
+		}
+		final := map[string]any{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   model,
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
+		}
+		if _, err := io.WriteString(w, sseData(final)); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	content := stringValue(msg["content"])
+	lines := openai.IterChatCompletionSSE([]string{content}, model, id)
+	for _, line := range lines {
+		if _, err := io.WriteString(w, line); err != nil {
+			return err
+		}
+	}
+	flusher.Flush()
+	return nil
+}
+
 func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) (string, error) {
 	flusher, ok := w.(stdhttp.Flusher)
 	if !ok {
@@ -699,6 +785,33 @@ func streamGatewayDeltas(body io.Reader, emit func(string) error) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func firstChoiceMessage(resp map[string]any) map[string]any {
+	choices, ok := resp["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return nil
+	}
+	first, ok := choices[0].(map[string]any)
+	if !ok {
+		return nil
+	}
+	msg, _ := first["message"].(map[string]any)
+	return msg
+}
+
+func stringValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case []byte:
+		return string(t)
+	default:
+		if t == nil {
+			return ""
+		}
+		return ""
+	}
 }
 
 func smartDelta(full *string, chunk string) string {
