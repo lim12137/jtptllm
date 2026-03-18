@@ -538,9 +538,15 @@ func extractGatewayTextDelta(evt map[string]any) string {
 		return ""
 	}
 	if data, ok := evt["data"].(map[string]any); ok {
+		if msg, ok := data["message"].(map[string]any); ok {
+			return extractTextFromMessage(msg)
+		}
 		if _, has := data["content"]; has {
 			evt = data
 		}
+	}
+	if msg, ok := evt["message"].(map[string]any); ok {
+		return extractTextFromMessage(msg)
 	}
 	content := evt["content"]
 	switch v := content.(type) {
@@ -840,6 +846,12 @@ func streamGatewayDeltas(body io.Reader, emit func(string) error) error {
 		var evt map[string]any
 		if err := json.Unmarshal([]byte(payload), &evt); err != nil {
 			continue
+		}
+		if msg, ok := gatewayRunError(evt); ok {
+			if strings.TrimSpace(msg) == "" {
+				msg = "upstream run failed"
+			}
+			return errors.New(msg)
 		}
 		if isGatewayEndEvent(evt) {
 			break

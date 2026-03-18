@@ -365,6 +365,123 @@ func TestStreamErrorDoesNotWriteJSON(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsStreamMessageTextDelta(t *testing.T) {
+	evt := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{"text": "hello"},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	sse := "data: " + string(b) + "\n\n" +
+		"data: [DONE]\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "\"content\":\"hello\"") {
+		t.Fatalf("missing content delta: %s", rec.Body.String())
+	}
+}
+
+func TestChatCompletionsStreamMessageContentDelta(t *testing.T) {
+	evt := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": map[string]any{"value": "hello"}},
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	sse := "data: " + string(b) + "\n\n" +
+		"data: [DONE]\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "\"content\":\"hello\"") {
+		t.Fatalf("missing content delta: %s", rec.Body.String())
+	}
+}
+
+func TestChatCompletionsStreamUpstreamErrorDoesNotFinish(t *testing.T) {
+	evt := map[string]any{
+		"data": map[string]any{
+			"error": map[string]any{
+				"content": map[string]any{"errorMsg": "boom"},
+			},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	sse := "data: " + string(b) + "\n\n" +
+		"data: [DONE]\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if strings.Contains(rec.Body.String(), "\"finish_reason\":\"stop\"") {
+		t.Fatalf("unexpected finish_reason stop: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "[DONE]") {
+		t.Fatalf("unexpected DONE marker: %s", rec.Body.String())
+	}
+}
+
 func TestIOLoggingEnabled(t *testing.T) {
 	buf := &bytes.Buffer{}
 	old := log.Writer()
