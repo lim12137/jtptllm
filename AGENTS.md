@@ -1,5 +1,9 @@
 # Repository Guidelines
 用子代理执行具体任务，主代理分析任务要求及任务结果，做调度和分发工作，工作分发估计用时不超过10min，子代理用gpt-5.4-mini 模型。
+## 必读/流程
+- 所有任务必须使用子代理执行，主代理仅负责拆分、调度与汇总。
+- 子代理执行超过 10 分钟未产出结果时，必须回询进度与阻塞原因。
+- 并发测试必须落盘为 `docs` 下的 `*.md` 报告，报告包含测试命令与结果摘要。
 ## Project Structure & Module Organization
 - `cmd/proxy/main.go`: application entrypoint, starts the HTTP proxy server.
 - `internal/config`: parses `api.txt` and runtime config.
