@@ -74,6 +74,27 @@ func TestParseChatRequestCompressesItemsArray(t *testing.T) {
 	}
 }
 
+func TestToolSystemPrefixIncludesProtocol(t *testing.T) {
+	payload := map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":       "get_weather",
+				"parameters": map[string]any{"type": "object"},
+			},
+		}},
+		"tool_choice": "none",
+	}
+	parsed := ParseChatRequest(payload)
+	if !strings.Contains(parsed.Prompt, "tc_protocol") {
+		t.Fatalf("missing tc_protocol")
+	}
+	if !strings.Contains(parsed.Prompt, "tc_forbid") {
+		t.Fatalf("missing tc_forbid")
+	}
+}
+
 func TestParseToolSentinelToChatResponse(t *testing.T) {
 	text := "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<<END>>>"
 	res := ParseToolSentinel(text)

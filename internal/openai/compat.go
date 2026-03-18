@@ -611,6 +611,10 @@ func buildToolSystemPrefix(tools []map[string]any, choice string) string {
 	if strings.TrimSpace(choice) != "" {
 		payload["tool_choice"] = choice
 	}
+	payload["tc_protocol"] = "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"tool_name\",\"a\":{}}],\"c\":\"\"}<<<END>>>"
+	if strings.EqualFold(strings.TrimSpace(choice), "none") {
+		payload["tc_forbid"] = true
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return ""
