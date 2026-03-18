@@ -71,9 +71,34 @@ if ($LogIO -and -not $env:PROXY_LOG_IO) {
 $outLog = Join-Path $repoRoot "proxy_8022.log"
 $errLog = Join-Path $repoRoot "proxy_8022.err"
 
+$stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$displayStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+$sep = "===== $displayStamp ====="
+
+if (Test-Path $outLog) {
+    Move-Item -Path $outLog -Destination "$outLog.$stamp" -Force
+}
+if (Test-Path $errLog) {
+    Move-Item -Path $errLog -Destination "$errLog.$stamp" -Force
+}
+
 $proc = Start-Process -FilePath $binFull -WorkingDirectory $repoRoot `
     -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
     -NoNewWindow -PassThru
+
+Start-Sleep -Seconds 1
+
+function Write-Separator {
+    param([string]$Path, [string]$Line)
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    $sw = New-Object System.IO.StreamWriter($fs)
+    $sw.WriteLine($Line)
+    $sw.Flush()
+    $sw.Close()
+}
+
+Write-Separator -Path $outLog -Line $sep
+Write-Separator -Path $errLog -Line $sep
 
 if (-not $SkipHealthCheck) {
     $healthOk = $false
