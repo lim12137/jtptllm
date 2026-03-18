@@ -15,6 +15,10 @@ pdf_images/
 proxy_8022.log
 proxy_8022.err
 
+# Proxy runtime logs
+proxy_8022.log.*
+proxy_8022.err.*
+
 # Local tool state / scratch files (do not commit)
 .gitconfig
 $null
