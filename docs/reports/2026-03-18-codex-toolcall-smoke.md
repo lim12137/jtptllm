@@ -48,3 +48,8 @@ Tool-call **not stable / not triggered** in this smoke run. The proxy forwarded 
 - Result: **200 OK** for both endpoints, tool_calls/function_call generated.
   - `/v1/chat/completions`: `tool_calls` present, `finish_reason=tool_calls`.
   - `/v1/responses`: `output` contains `function_call` item.
+
+## Run 4 (stream=true tools, SSE tool_calls)
+- Rebuilt `bin/proxy.exe` after streaming toolcall SSE fix.
+- Request: `stream=true` with tools/tool_choice=auto (李茗考勤场景).
+- Result: SSE returned `tool_calls` chunk + `finish_reason=tool_calls` + `[DONE]`.
