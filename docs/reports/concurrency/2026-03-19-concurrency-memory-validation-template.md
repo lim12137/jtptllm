@@ -9,7 +9,7 @@
 ## Commands
 ```powershell
 powershell -File scripts/collect_concurrency_memory.ps1 -WhatIf
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect_concurrency_memory.ps1 -ConcurrencyLevels 1 -SteadyTotal 0 -SampleIntervalMs 200
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/collect_concurrency_memory.ps1 -ConcurrencyLevels 1 -SteadyTotal 1 -SampleIntervalMs 200
 powershell -File scripts/collect_concurrency_memory.ps1 -ConcurrencyLevels 8,16,20 -SteadyTotal 300 -P95BudgetMs 3000
 ```
 
