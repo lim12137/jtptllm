@@ -6,6 +6,7 @@ param(
   [int]$SteadyTotal = 300,
   [int]$P95BudgetMs = 3000,
   [int]$SampleIntervalMs = 1000,
+  [int]$BenchmarkTimeoutSeconds = 180,
   [string]$BenchmarkScriptPath = '',
   [string]$RawOutputPath = ''
 )
@@ -33,6 +34,8 @@ function Get-ProcessMemoryRows {
       $rows += [pscustomobject]@{
         process_name = $proc.ProcessName
         pid = $proc.Id
+        path = $proc.Path
+        start_time = $(try { $proc.StartTime.ToString('s') } catch { $null })
         working_set64 = [int64]$proc.WorkingSet64
         private_memory_size64 = [int64]$proc.PrivateMemorySize64
         peak_working_set64 = [int64]$proc.PeakWorkingSet64
@@ -105,11 +108,25 @@ function Invoke-LevelMemoryCollection {
 
   $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumentList -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -WindowStyle Hidden
   $samples = New-Object System.Collections.Generic.List[object]
+  $deadline = (Get-Date).AddSeconds($BenchmarkTimeoutSeconds)
+  $timedOut = $false
 
   while (-not $proc.HasExited) {
     [void]$samples.Add((Get-SampleSnapshot -Concurrency $Concurrency))
+    if ((Get-Date) -ge $deadline) {
+      $timedOut = $true
+      try {
+        Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+      } catch {
+      }
+      break
+    }
     Start-Sleep -Milliseconds $SampleIntervalMs
     $proc.Refresh()
+  }
+  if ($timedOut) {
+    Start-Sleep -Milliseconds 200
+    try { $proc.Refresh() } catch {}
   }
   [void]$samples.Add((Get-SampleSnapshot -Concurrency $Concurrency))
 
@@ -139,13 +156,14 @@ function Invoke-LevelMemoryCollection {
 
   [pscustomobject]@{
     concurrency = $Concurrency
-    benchmark_exit_code = $proc.ExitCode
+    benchmark_exit_code = $(if ($timedOut) { 'timeout' } else { $proc.ExitCode })
     benchmark_stdout_path = $stdoutPath
     benchmark_stderr_path = $stderrPath
     sample_path = $samplePath
     benchmark_summary = $benchSummary
     sample_count = $samples.Count
     peaks = Get-PeakSummary -Samples $samples.ToArray()
+    timed_out = $timedOut
   }
 }
 
@@ -162,6 +180,7 @@ if ($WhatIfPreference) {
     steady_total = $SteadyTotal
     p95_budget_ms = $P95BudgetMs
     sample_interval_ms = $SampleIntervalMs
+    benchmark_timeout_seconds = $BenchmarkTimeoutSeconds
     benchmark_script_path = $BenchmarkScriptPath
     raw_output_path = $RawOutputPath
     focus = @('proxy.exe', 'go.exe')
@@ -191,6 +210,7 @@ $result = [pscustomobject]@{
   steady_total = $SteadyTotal
   p95_budget_ms = $P95BudgetMs
   sample_interval_ms = $SampleIntervalMs
+  benchmark_timeout_seconds = $BenchmarkTimeoutSeconds
   levels = @($levels | ForEach-Object {
     [pscustomobject]@{
       concurrency = $_.concurrency
@@ -201,6 +221,7 @@ $result = [pscustomobject]@{
       benchmark_summary = $_.benchmark_summary
       sample_count = $_.sample_count
       peaks = $_.peaks
+      timed_out = $_.timed_out
     }
   })
 }
