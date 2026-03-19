@@ -7,12 +7,12 @@ import (
 
 	"github.com/lim12137/jtptllm/internal/config"
 	"github.com/lim12137/jtptllm/internal/gateway"
+	"github.com/lim12137/jtptllm/internal/openai"
 	"github.com/lim12137/jtptllm/internal/session"
 )
 
 const (
 	defaultAPITxt          = "api.txt"
-	defaultModelName       = "agent"
 	defaultSessionTTL      = 600
 	defaultSessionPoolSize = 10
 )
@@ -25,7 +25,7 @@ func Run(addr string) error {
 	}
 	gw := gateway.NewClient(cfg, nil)
 	sessions := session.NewPoolManager(gw, defaultSessionTTL, defaultSessionPoolSize)
-	server := NewServer(gw, sessions, Options{DefaultModel: defaultModelName})
+	server := NewServer(gw, sessions, Options{DefaultModel: openai.DefaultModel})
 	log.Printf("proxy server starting on %s", addr)
 	return stdhttp.ListenAndServe(addr, server.Handler())
 }

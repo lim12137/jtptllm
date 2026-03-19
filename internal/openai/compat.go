@@ -11,6 +11,8 @@ import (
 
 var modelMarkerRe = regexp.MustCompile(`\*\*model\s*=\s*[^*]+\*\*`)
 
+const DefaultModel = "qingyuan"
+
 type Message struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"`
@@ -89,7 +91,7 @@ func PromptFromResponses(payload map[string]any) string {
 }
 
 func ParseChatRequest(payload map[string]any) ParsedRequest {
-	model := strOr(payload["model"], "agent")
+	model := strOr(payload["model"], DefaultModel)
 	stream := boolOr(payload["stream"], false)
 	prompt := chatMessagesToPrompt(asMessages(payload["messages"]))
 	tools := extractTools(payload)
@@ -101,7 +103,7 @@ func ParseChatRequest(payload map[string]any) ParsedRequest {
 }
 
 func ParseResponsesRequest(payload map[string]any) ParsedRequest {
-	model := strOr(payload["model"], "agent")
+	model := strOr(payload["model"], DefaultModel)
 	stream := boolOr(payload["stream"], false)
 	prompt := PromptFromResponses(payload)
 	tools := extractTools(payload)

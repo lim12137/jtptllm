@@ -168,7 +168,7 @@ func TestToolSystemPrefixNotInjectedWithoutTools(t *testing.T) {
 	if strings.Contains(parsed.Prompt, "tc_protocol") {
 		t.Fatalf("unexpected tc_protocol")
 	}
-	if parsed.Prompt != "user: hi" {
+	if parsed.Prompt != "**model = qingyuan**\nuser: hi" {
 		t.Fatalf("prompt=%q", parsed.Prompt)
 	}
 }
@@ -190,6 +190,19 @@ func TestParseChatRequestInjectsModelQingyuan(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	}
 	parsed := ParseChatRequest(payload)
+	if !strings.HasPrefix(parsed.Prompt, "**model = qingyuan**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
+func TestParseChatRequestDefaultsToQingyuan(t *testing.T) {
+	payload := map[string]any{
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	parsed := ParseChatRequest(payload)
+	if parsed.Model != "qingyuan" {
+		t.Fatalf("model=%q", parsed.Model)
+	}
 	if !strings.HasPrefix(parsed.Prompt, "**model = qingyuan**\n") {
 		t.Fatalf("prompt=%q", parsed.Prompt)
 	}
@@ -226,6 +239,19 @@ func TestParseResponsesRequestInjectsModelQingyuan(t *testing.T) {
 		"input": "hi",
 	}
 	parsed := ParseResponsesRequest(payload)
+	if !strings.HasPrefix(parsed.Prompt, "**model = qingyuan**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
+func TestParseResponsesRequestDefaultsToQingyuan(t *testing.T) {
+	payload := map[string]any{
+		"input": "hi",
+	}
+	parsed := ParseResponsesRequest(payload)
+	if parsed.Model != "qingyuan" {
+		t.Fatalf("model=%q", parsed.Model)
+	}
 	if !strings.HasPrefix(parsed.Prompt, "**model = qingyuan**\n") {
 		t.Fatalf("prompt=%q", parsed.Prompt)
 	}
