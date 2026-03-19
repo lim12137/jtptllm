@@ -34,6 +34,7 @@ type Server struct {
 	gateway      Gateway
 	sessions     *session.PoolManager
 	defaultModel string
+	globalGate   chan struct{}
 }
 
 func NewServer(gateway Gateway, sessions *session.PoolManager, opts Options) *Server {
@@ -45,6 +46,29 @@ func NewServer(gateway Gateway, sessions *session.PoolManager, opts Options) *Se
 		gateway:      gateway,
 		sessions:     sessions,
 		defaultModel: model,
+		globalGate:   make(chan struct{}, defaultGlobalHTTPLimit),
+	}
+}
+
+func (s *Server) acquireGlobalSlot(ctx context.Context) error {
+	if s == nil || s.globalGate == nil {
+		return nil
+	}
+	select {
+	case s.globalGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) releaseGlobalSlot() {
+	if s == nil || s.globalGate == nil {
+		return
+	}
+	select {
+	case <-s.globalGate:
+	default:
 	}
 }
 
@@ -85,6 +109,11 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
+	if err := s.acquireGlobalSlot(r.Context()); err != nil {
+		writeJSON(w, stdhttp.StatusRequestTimeout, map[string]any{"error": err.Error()})
+		return
+	}
+	defer s.releaseGlobalSlot()
 	payload, err := decodeJSON(r.Body)
 	if err != nil {
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -212,6 +241,11 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
+	if err := s.acquireGlobalSlot(r.Context()); err != nil {
+		writeJSON(w, stdhttp.StatusRequestTimeout, map[string]any{"error": err.Error()})
+		return
+	}
+	defer s.releaseGlobalSlot()
 	payload, err := decodeJSON(r.Body)
 	if err != nil {
 		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid json"})

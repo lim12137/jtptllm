@@ -11,8 +11,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
+	"sync/atomic"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lim12137/jtptllm/internal/gateway"
 	"github.com/lim12137/jtptllm/internal/session"
@@ -26,6 +29,7 @@ type stubGateway struct {
 	runErr      error
 	streamResp  *http.Response
 	streamErr   error
+	runHook     func(req gateway.RunRequest) (*http.Response, map[string]any, error)
 }
 
 func (s *stubGateway) CreateSession(ctx context.Context) (string, error) {
@@ -35,6 +39,9 @@ func (s *stubGateway) CreateSession(ctx context.Context) (string, error) {
 
 func (s *stubGateway) Run(ctx context.Context, req gateway.RunRequest) (*http.Response, map[string]any, error) {
 	s.lastRun = req
+	if s.runHook != nil {
+		return s.runHook(req)
+	}
 	if req.Stream {
 		return s.streamResp, nil, s.streamErr
 	}
@@ -654,5 +661,197 @@ func TestChatCompletionToolSentinelStreamBuffered(t *testing.T) {
 	}
 	if !strings.Contains(bodyText, "[DONE]") {
 		t.Fatalf("missing DONE in sse body: %s", bodyText)
+	}
+}
+
+func TestGlobalConcurrencyGateSeventeenthRequestWaits(t *testing.T) {
+	release := make(chan struct{})
+	var started int32
+	gw := &stubGateway{
+		runHook: func(req gateway.RunRequest) (*http.Response, map[string]any, error) {
+			atomic.AddInt32(&started, 1)
+			<-release
+			return nil, map[string]any{
+				"data": map[string]any{
+					"message": map[string]any{"text": "ok"},
+				},
+			}, nil
+		},
+	}
+	srv := newTestServer(gw)
+
+	handler := srv.Handler()
+	var wg sync.WaitGroup
+	responses := make([]*httptest.ResponseRecorder, 17)
+
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			body := bytes.NewBufferString(`{"model":"agent","messages":[{"role":"user","content":"hi"}]}`)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+			req.Header.Set("x-client-id", fmt.Sprintf("gate-chat-%d", idx))
+			rec := httptest.NewRecorder()
+			responses[idx] = rec
+			handler.ServeHTTP(rec, req)
+		}(i)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&started) < 16 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&started); got != 16 {
+		t.Fatalf("started=%d want 16", got)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		body := bytes.NewBufferString(`{"model":"agent","messages":[{"role":"user","content":"hi"}]}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+		req.Header.Set("x-client-id", "gate-chat-17")
+		rec := httptest.NewRecorder()
+		responses[16] = rec
+		handler.ServeHTTP(rec, req)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	if got := atomic.LoadInt32(&started); got != 16 {
+		t.Fatalf("17th request should wait, started=%d", got)
+	}
+
+	close(release)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&started); got != 17 {
+		t.Fatalf("all requests should eventually run, started=%d", got)
+	}
+	if responses[16] == nil || responses[16].Code != http.StatusOK {
+		t.Fatalf("17th status=%v", responses[16].Code)
+	}
+}
+
+func TestGlobalConcurrencyGateSharedByChatAndResponses(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan string, 2)
+	gw := &stubGateway{
+		runHook: func(req gateway.RunRequest) (*http.Response, map[string]any, error) {
+			started <- req.Text
+			<-release
+			return nil, map[string]any{
+				"data": map[string]any{
+					"message": map[string]any{"text": "ok"},
+				},
+			}, nil
+		},
+	}
+	srv := newTestServer(gw)
+	srv.globalGate = make(chan struct{}, 1)
+	handler := srv.Handler()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"messages":[{"role":"user","content":"chat"}]}`))
+		req.Header.Set("x-client-id", "shared-chat")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not start")
+	}
+
+	go func() {
+		defer wg.Done()
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"input":"resp"}`))
+		req.Header.Set("x-client-id", "shared-resp")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	select {
+	case msg := <-started:
+		t.Fatalf("second request should wait, started=%q", msg)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	wg.Wait()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second request did not start after release")
+	}
+}
+
+func TestGlobalConcurrencyGateReleasesOnError(t *testing.T) {
+	releaseFirst := make(chan struct{})
+	var callCount int32
+	gw := &stubGateway{
+		runHook: func(req gateway.RunRequest) (*http.Response, map[string]any, error) {
+			n := atomic.AddInt32(&callCount, 1)
+			if n == 1 {
+				<-releaseFirst
+				return nil, nil, errors.New("boom")
+			}
+			return nil, map[string]any{
+				"data": map[string]any{
+					"message": map[string]any{"text": "ok"},
+				},
+			}, nil
+		},
+	}
+	srv := newTestServer(gw)
+	srv.globalGate = make(chan struct{}, 1)
+	handler := srv.Handler()
+
+	var wg sync.WaitGroup
+	firstRec := httptest.NewRecorder()
+	secondRec := httptest.NewRecorder()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"messages":[{"role":"user","content":"one"}]}`))
+		req.Header.Set("x-client-id", "error-first")
+		handler.ServeHTTP(firstRec, req)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&callCount) < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&callCount) != 1 {
+		t.Fatalf("first request did not start")
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"messages":[{"role":"user","content":"two"}]}`))
+		req.Header.Set("x-client-id", "error-second")
+		handler.ServeHTTP(secondRec, req)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	if atomic.LoadInt32(&callCount) != 1 {
+		t.Fatalf("second request should still be waiting, callCount=%d", atomic.LoadInt32(&callCount))
+	}
+
+	close(releaseFirst)
+	wg.Wait()
+
+	if atomic.LoadInt32(&callCount) != 2 {
+		t.Fatalf("callCount=%d", atomic.LoadInt32(&callCount))
+	}
+	if firstRec.Code != http.StatusBadGateway {
+		t.Fatalf("first status=%d", firstRec.Code)
+	}
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("second status=%d", secondRec.Code)
 	}
 }

@@ -15,6 +15,7 @@ const (
 	defaultAPITxt          = "api.txt"
 	defaultSessionTTL      = 600
 	defaultSessionPoolSize = 10
+	defaultGlobalHTTPLimit = 16
 )
 
 // Run starts the HTTP server with default config.
