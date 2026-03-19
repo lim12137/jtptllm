@@ -114,7 +114,7 @@ func ParseResponsesRequest(payload map[string]any) ParsedRequest {
 
 func injectModelMarker(model string, prompt string) string {
 	m := strings.TrimSpace(model)
-	if m != "fast" && m != "deepseek" {
+	if m != "fast" && m != "deepseek" && m != "qingyuan" {
 		return prompt
 	}
 	if strings.TrimSpace(prompt) == "" {

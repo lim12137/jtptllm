@@ -184,6 +184,17 @@ func TestParseChatRequestInjectsModelFast(t *testing.T) {
 	}
 }
 
+func TestParseChatRequestInjectsModelQingyuan(t *testing.T) {
+	payload := map[string]any{
+		"model":    "qingyuan",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	parsed := ParseChatRequest(payload)
+	if !strings.HasPrefix(parsed.Prompt, "**model = qingyuan**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
 func TestParseChatRequestReplacesExistingMarker(t *testing.T) {
 	payload := map[string]any{
 		"model":    "deepseek",
@@ -205,6 +216,17 @@ func TestParseResponsesRequestInjectsModelDeepseek(t *testing.T) {
 	}
 	parsed := ParseResponsesRequest(payload)
 	if !strings.HasPrefix(parsed.Prompt, "**model = deepseek**\n") {
+		t.Fatalf("prompt=%q", parsed.Prompt)
+	}
+}
+
+func TestParseResponsesRequestInjectsModelQingyuan(t *testing.T) {
+	payload := map[string]any{
+		"model": "qingyuan",
+		"input": "hi",
+	}
+	parsed := ParseResponsesRequest(payload)
+	if !strings.HasPrefix(parsed.Prompt, "**model = qingyuan**\n") {
 		t.Fatalf("prompt=%q", parsed.Prompt)
 	}
 }
