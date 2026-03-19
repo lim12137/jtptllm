@@ -107,7 +107,7 @@ func TestModelEndpoints(t *testing.T) {
 	if !ok {
 		t.Fatalf("models missing")
 	}
-	if len(data) != 2 {
+	if len(data) != 3 {
 		t.Fatalf("models len=%d", len(data))
 	}
 	found := map[string]bool{}
@@ -120,7 +120,7 @@ func TestModelEndpoints(t *testing.T) {
 			found[id] = true
 		}
 	}
-	if !found["fast"] || !found["deepseek"] {
+	if !found["fast"] || !found["deepseek"] || !found["qingyuan"] {
 		t.Fatalf("models=%v", found)
 	}
 }

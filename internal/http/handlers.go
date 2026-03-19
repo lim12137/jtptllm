@@ -75,6 +75,7 @@ func (s *Server) handleModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		"data": []any{
 			map[string]any{"id": "fast", "object": "model"},
 			map[string]any{"id": "deepseek", "object": "model"},
+			map[string]any{"id": "qingyuan", "object": "model"},
 		},
 	})
 }
