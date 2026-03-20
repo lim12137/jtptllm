@@ -468,7 +468,24 @@ func TestParseToolSentinelTagWrappedToolCallPreservesOuterText(t *testing.T) {
 	if res.ToolCalls[0].Name != "multi_tool_use.parallel" {
 		t.Fatalf("name=%q", res.ToolCalls[0].Name)
 	}
-	if res.Content != "before  after" {
+	if res.Content != "before after" {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
+func TestParseToolSentinelTagWrappedToolCallDoesNotGloballyCompressSpaces(t *testing.T) {
+	// We only want to dedupe the *one* redundant space introduced at the join point.
+	// The extra spaces after the tag should still be preserved.
+	text := "before <tool_call><multi_tool_use.parallel>{\"tool_uses\":[{\"recipient_name\":\"functions.shell_command\",\"parameters\":{\"command\":\"Get-Date\"}}]}</multi_tool_use.parallel></tool_call>   after"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "multi_tool_use.parallel" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	// left contributes 1 trailing space, right contributes 3 leading spaces; we only remove 1 => 3 spaces remain.
+	if res.Content != "before   after" {
 		t.Fatalf("content=%q", res.Content)
 	}
 }

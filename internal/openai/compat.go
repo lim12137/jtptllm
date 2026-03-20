@@ -967,7 +967,14 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	if err != nil {
 		return ToolParseResult{Content: trimmed}
 	}
-	content := strings.TrimSpace(trimmed[:start] + trimmed[innerEnd+len(closeTag):])
+	left := trimmed[:start]
+	right := trimmed[innerEnd+len(closeTag):]
+	// If removing the tag would create a doubled space at the join point,
+	// drop exactly one leading space from the right side (don't globally normalize whitespace).
+	if strings.HasSuffix(left, " ") && !strings.HasSuffix(left, "  ") && strings.HasPrefix(right, " ") {
+		right = strings.TrimPrefix(right, " ")
+	}
+	content := strings.TrimSpace(left + right)
 	return ToolParseResult{
 		ToolCalls: []ToolCall{{
 			ID:        newID("call"),

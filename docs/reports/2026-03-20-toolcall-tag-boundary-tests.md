@@ -55,5 +55,21 @@
 
 ## Notes
 
-- 本轮没有修改 `internal/openai/compat.go` 或其他生产代码。
-- 新增测试锁定了当前 parser 的一个细节：tag block 前后文本合并时，中间会保留双空格，而不是折叠为单空格。
+## Update: Join-Point Space Dedupe
+
+执行时间：2026-03-20 Asia/Shanghai
+
+- 行为变更：tag block 前后文本合并时，如果左侧以单个空格结尾且右侧以空格开头，会在拼接点去掉右侧开头 1 个空格，使 `before <tool_call>...</tool_call> after` 的 `Content` 从 `before  after` 变为 `before after`。
+- 约束：只做拼接点去重 1 个空格，不做全局空白压缩，不影响 sentinel / json fence / raw json 路径。
+
+验证命令（摘录）：
+
+1. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'TestParseToolSentinelTagWrappedToolCallPreservesOuterText|TestParseToolSentinelTagWrappedToolCallDoesNotGloballyCompressSpaces|TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText|TestParseToolSentinelTagWrappedToolCall' -v`
+   - 结果：PASS
+   - 摘要：`TestParseToolSentinelTagWrappedToolCallPreservesOuterText` 现在断言 `Content == "before after"`；`TestParseToolSentinelTagWrappedToolCallDoesNotGloballyCompressSpaces` 断言不会把用户显式多空格压平。
+
+2. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -v`
+   - 结果：PASS
+
+3. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -v`
+   - 结果：PASS
