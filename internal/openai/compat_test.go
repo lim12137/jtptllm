@@ -419,6 +419,46 @@ func TestParseToolSentinelFallbackFunctionCall(t *testing.T) {
 	}
 }
 
+func TestParseToolSentinelFallbackRawJSONObjectFunctionCall(t *testing.T) {
+	text := "{\"function_call\":{\"name\":\"spawn_agent\",\"arguments\":{\"task\":\"rebuild\"}}}"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "spawn_agent" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID == "" {
+		t.Fatalf("id empty")
+	}
+	if !strings.Contains(res.ToolCalls[0].Arguments, "\"task\":\"rebuild\"") {
+		t.Fatalf("arguments=%q", res.ToolCalls[0].Arguments)
+	}
+	if res.Content != "" {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
+func TestParseToolSentinelTagWrappedToolCall(t *testing.T) {
+	text := "<tool_call><multi_tool_use.parallel>{\"tool_uses\":[{\"recipient_name\":\"functions.shell_command\",\"parameters\":{\"command\":\"Get-Date\"}}]}</multi_tool_use.parallel></tool_call>"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "multi_tool_use.parallel" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID == "" {
+		t.Fatalf("id empty")
+	}
+	if !strings.Contains(res.ToolCalls[0].Arguments, "\"recipient_name\":\"functions.shell_command\"") {
+		t.Fatalf("arguments=%q", res.ToolCalls[0].Arguments)
+	}
+	if res.Content != "" {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
 func TestParseToolSentinelFallbackActionToolInput(t *testing.T) {
 	text := "answer\n```json\n{\"action\":\"call_tool\",\"tool\":\"mcp__kqSse__checkLoginStatus\",\"input\":{}}\n```"
 	res := ParseToolSentinel(text)

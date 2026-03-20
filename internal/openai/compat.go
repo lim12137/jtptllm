@@ -43,6 +43,158 @@ type ToolParseResult struct {
 	HasSentinel bool
 }
 
+func intFromAny(v any) (int, bool) {
+	switch t := v.(type) {
+	case nil:
+		return 0, false
+	case int:
+		return t, true
+	case int64:
+		return int(t), true
+	case float64:
+		return int(t), true
+	case float32:
+		return int(t), true
+	default:
+		return 0, false
+	}
+}
+
+// NormalizeResponsesUsage converts upstream usage into Responses usage keys:
+//
+//	{input_tokens, output_tokens, total_tokens}
+//
+// Returns nil if no recognizable usage fields exist.
+func NormalizeResponsesUsage(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	// Some callers may pass an object that contains {usage:{...}}.
+	if u, ok := raw["usage"].(map[string]any); ok {
+		raw = u
+	}
+
+	if in, okIn := intFromAny(raw["input_tokens"]); okIn {
+		out, okOut := intFromAny(raw["output_tokens"])
+		tot, okTot := intFromAny(raw["total_tokens"])
+		if !okOut {
+			out = 0
+		}
+		if !okTot {
+			tot = in + out
+		}
+		return map[string]any{
+			"input_tokens":  in,
+			"output_tokens": out,
+			"total_tokens":  tot,
+		}
+	}
+	if out, okOut := intFromAny(raw["output_tokens"]); okOut {
+		in, okIn := intFromAny(raw["input_tokens"])
+		tot, okTot := intFromAny(raw["total_tokens"])
+		if !okIn {
+			in = 0
+		}
+		if !okTot {
+			tot = in + out
+		}
+		return map[string]any{
+			"input_tokens":  in,
+			"output_tokens": out,
+			"total_tokens":  tot,
+		}
+	}
+
+	// Chat usage key mapping.
+	p, okP := intFromAny(raw["prompt_tokens"])
+	c, okC := intFromAny(raw["completion_tokens"])
+	t, okT := intFromAny(raw["total_tokens"])
+	if okP || okC || okT {
+		if !okP {
+			p = 0
+		}
+		if !okC {
+			c = 0
+		}
+		if !okT {
+			t = p + c
+		}
+		return map[string]any{
+			"input_tokens":  p,
+			"output_tokens": c,
+			"total_tokens":  t,
+		}
+	}
+	return nil
+}
+
+// NormalizeChatUsage converts upstream usage into Chat Completions usage keys:
+//
+//	{prompt_tokens, completion_tokens, total_tokens}
+//
+// Returns nil if no recognizable usage fields exist.
+func NormalizeChatUsage(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if u, ok := raw["usage"].(map[string]any); ok {
+		raw = u
+	}
+
+	if p, okP := intFromAny(raw["prompt_tokens"]); okP {
+		c, okC := intFromAny(raw["completion_tokens"])
+		t, okT := intFromAny(raw["total_tokens"])
+		if !okC {
+			c = 0
+		}
+		if !okT {
+			t = p + c
+		}
+		return map[string]any{
+			"prompt_tokens":     p,
+			"completion_tokens": c,
+			"total_tokens":      t,
+		}
+	}
+	if c, okC := intFromAny(raw["completion_tokens"]); okC {
+		p, okP := intFromAny(raw["prompt_tokens"])
+		t, okT := intFromAny(raw["total_tokens"])
+		if !okP {
+			p = 0
+		}
+		if !okT {
+			t = p + c
+		}
+		return map[string]any{
+			"prompt_tokens":     p,
+			"completion_tokens": c,
+			"total_tokens":      t,
+		}
+	}
+
+	// Responses usage key mapping.
+	in, okIn := intFromAny(raw["input_tokens"])
+	out, okOut := intFromAny(raw["output_tokens"])
+	t, okT := intFromAny(raw["total_tokens"])
+	if okIn || okOut || okT {
+		if !okIn {
+			in = 0
+		}
+		if !okOut {
+			out = 0
+		}
+		if !okT {
+			t = in + out
+		}
+		return map[string]any{
+			"prompt_tokens":     in,
+			"completion_tokens": out,
+			"total_tokens":      t,
+		}
+	}
+	return nil
+}
+
 func PromptFromChat(req ChatRequest) string {
 	return chatMessagesToPrompt(req.Messages)
 }
@@ -62,6 +214,37 @@ func PromptFromResponses(payload map[string]any) string {
 	case string:
 		prompt = v
 	case []any:
+		// Some clients send Responses "input" as a top-level content-part list:
+		//   input: [{type:"input_text", text:"..."}]
+		// Treat that as a single user message.
+		allParts := len(v) > 0
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				allParts = false
+				break
+			}
+			if _, has := m["role"]; has {
+				allParts = false
+				break
+			}
+			if _, has := m["content"]; has {
+				allParts = false
+				break
+			}
+			if _, has := m["type"]; !has {
+				allParts = false
+				break
+			}
+		}
+		if allParts {
+			text := strings.TrimSpace(coerceContentToStr(v))
+			if text != "" {
+				prompt = "user: " + text
+			}
+			break
+		}
+
 		var lines []string
 		for _, item := range v {
 			switch iv := item.(type) {
@@ -71,7 +254,11 @@ func PromptFromResponses(payload map[string]any) string {
 				}
 			case map[string]any:
 				role, _ := iv["role"].(string)
-				content := coerceContentToStr(iv["content"])
+				contentSrc := any(iv)
+				if c, ok := iv["content"]; ok {
+					contentSrc = c
+				}
+				content := coerceContentToStr(contentSrc)
 				if strings.TrimSpace(content) != "" {
 					if strings.TrimSpace(role) == "" {
 						role = "user"
@@ -128,6 +315,30 @@ func injectModelMarker(model string, prompt string) string {
 		return "**model = " + m + "**"
 	}
 	return "**model = " + m + "**\n" + cleaned
+}
+
+// ChatUsageFromCharCount is a lightweight fallback when upstream usage is missing.
+// It intentionally counts Unicode code points (runes) rather than bytes.
+func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
+	p := utf8.RuneCountInString(prompt)
+	c := utf8.RuneCountInString(completion)
+	return map[string]any{
+		"prompt_tokens":     p,
+		"completion_tokens": c,
+		"total_tokens":      p + c,
+	}
+}
+
+// ResponsesUsageFromCharCount is a lightweight fallback when upstream usage is missing.
+// It intentionally counts Unicode code points (runes) rather than bytes.
+func ResponsesUsageFromCharCount(input string, output string) map[string]any {
+	in := utf8.RuneCountInString(input)
+	out := utf8.RuneCountInString(output)
+	return map[string]any{
+		"input_tokens":  in,
+		"output_tokens": out,
+		"total_tokens":  in + out,
+	}
 }
 
 func BuildChatCompletionResponse(text string, model string) map[string]any {
@@ -206,8 +417,10 @@ func BuildResponsesResponse(text string, model string) map[string]any {
 		"object":     "response",
 		"created_at": created,
 		"model":      model,
+		"usage":      map[string]any{},
 		"output": []any{
 			map[string]any{
+				"id":   newID("msg"),
 				"type": "message",
 				"role": "assistant",
 				"content": []any{
@@ -244,6 +457,7 @@ func BuildResponsesResponseFromText(text string, model string) map[string]any {
 		"object":      "response",
 		"created_at":  created,
 		"model":       model,
+		"usage":       map[string]any{},
 		"output":      output,
 		"output_text": content,
 	}
@@ -296,16 +510,201 @@ func IterResponsesSSE(deltas []string, model string, respID string) []string {
 	}
 	created := time.Now().Unix()
 	var out []string
-	createdEvt := map[string]any{"type": "response.created", "response": map[string]any{"id": rid, "model": model, "created_at": created}}
-	out = append(out, sseData(createdEvt))
+	seq := 0
+
+	baseResp := map[string]any{
+		"id":         rid,
+		"object":     "response",
+		"created_at": created,
+		"model":      model,
+		"status":     "in_progress",
+		"output":     []any{},
+		"usage":      nil, // created/in_progress usage must be null
+	}
+
+	out = append(out, sseEvent("response.created", map[string]any{
+		"sequence_number": seq,
+		"response":        baseResp,
+	}))
+	seq++
+
+	out = append(out, sseEvent("response.in_progress", map[string]any{
+		"sequence_number": seq,
+		"response":        baseResp,
+	}))
+	seq++
+
+	var full strings.Builder
 	for _, d := range deltas {
 		if d == "" {
 			continue
 		}
-		out = append(out, sseData(map[string]any{"type": "response.output_text.delta", "delta": d, "response_id": rid}))
+		full.WriteString(d)
 	}
-	out = append(out, sseData(map[string]any{"type": "response.completed", "response_id": rid}))
-	out = append(out, "data: [DONE]\n\n")
+
+	text := full.String()
+	parsed := ParseToolSentinel(text)
+	var outputs []any
+	if len(parsed.ToolCalls) > 0 {
+		for outputIndex, call := range parsed.ToolCalls {
+			itemID := newID("fc")
+			callID := call.ID
+			if strings.TrimSpace(callID) == "" {
+				callID = newID("call")
+			}
+			addedItem := map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "in_progress",
+				"call_id":   callID,
+				"name":      call.Name,
+				"arguments": "",
+			}
+			out = append(out, sseEvent("response.output_item.added", map[string]any{
+				"sequence_number": seq,
+				"response_id":     rid,
+				"output_index":    outputIndex,
+				"item":            addedItem,
+			}))
+			seq++
+
+			out = append(out, sseEvent("response.function_call_arguments.delta", map[string]any{
+				"sequence_number": seq,
+				"response_id":     rid,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"call_id":         callID,
+				"delta":           call.Arguments,
+			}))
+			seq++
+
+			out = append(out, sseEvent("response.function_call_arguments.done", map[string]any{
+				"sequence_number": seq,
+				"response_id":     rid,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"call_id":         callID,
+				"name":            call.Name,
+				"arguments":       call.Arguments,
+			}))
+			seq++
+
+			doneItem := map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   callID,
+				"name":      call.Name,
+				"arguments": call.Arguments,
+			}
+			out = append(out, sseEvent("response.output_item.done", map[string]any{
+				"sequence_number": seq,
+				"response_id":     rid,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"item":            doneItem,
+			}))
+			seq++
+			outputs = append(outputs, map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   callID,
+				"name":      call.Name,
+				"arguments": call.Arguments,
+			})
+		}
+	} else {
+		itemID := newID("msg")
+		outputIndex := 0
+		contentIndex := 0
+		item := map[string]any{
+			"id":      itemID,
+			"type":    "message",
+			"role":    "assistant",
+			"status":  "in_progress",
+			"content": []any{}, // official example uses empty content for output_item.added
+		}
+		out = append(out, sseEvent("response.output_item.added", map[string]any{
+			"sequence_number": seq,
+			"response_id":     rid,
+			"output_index":    outputIndex,
+			"item":            item,
+		}))
+		seq++
+
+		out = append(out, sseEvent("response.content_part.added", map[string]any{
+			"sequence_number": seq,
+			"response_id":     rid,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"content_index":   contentIndex,
+			"part":            map[string]any{"type": "output_text", "text": ""},
+		}))
+		seq++
+
+		if text != "" {
+			out = append(out, sseEvent("response.output_text.delta", map[string]any{
+				"sequence_number": seq,
+				"response_id":     rid,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"content_index":   contentIndex,
+				"delta":           text,
+			}))
+			seq++
+		}
+		out = append(out, sseEvent("response.output_text.done", map[string]any{
+			"sequence_number": seq,
+			"response_id":     rid,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"content_index":   contentIndex,
+			"text":            text,
+		}))
+		seq++
+
+		out = append(out, sseEvent("response.content_part.done", map[string]any{
+			"sequence_number": seq,
+			"response_id":     rid,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"content_index":   contentIndex,
+			"part":            map[string]any{"type": "output_text", "text": text},
+		}))
+		seq++
+
+		item["status"] = "completed"
+		item["content"] = []any{map[string]any{"type": "output_text", "text": text}}
+		out = append(out, sseEvent("response.output_item.done", map[string]any{
+			"sequence_number": seq,
+			"response_id":     rid,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"item":            item,
+		}))
+		seq++
+		outputs = append(outputs, item)
+	}
+
+	finalResp := map[string]any{
+		"id":          rid,
+		"object":      "response",
+		"created_at":  created,
+		"model":       model,
+		"status":      "completed",
+		"output":      outputs,
+		"output_text": parsed.Content,
+		"usage": map[string]any{
+			"input_tokens":  0,
+			"output_tokens": 0,
+			"total_tokens":  0,
+		},
+	}
+	out = append(out, sseEvent("response.completed", map[string]any{
+		"sequence_number": seq,
+		"response":        finalResp,
+	}))
 	return out
 }
 
@@ -438,7 +837,15 @@ func ParseToolSentinel(text string) ToolParseResult {
 	start := strings.Index(text, "<<<TC>>>")
 	end := strings.Index(text, "<<<END>>>")
 	if start < 0 || end < 0 || end <= start+len("<<<TC>>>") {
-		return parseToolCallJSONBlock(text)
+		res := parseToolCallJSONBlock(text)
+		if len(res.ToolCalls) > 0 {
+			return res
+		}
+		res = parseToolCallTaggedBlock(text)
+		if len(res.ToolCalls) > 0 {
+			return res
+		}
+		return parseToolCallRawJSON(text)
 	}
 	raw := text[start+len("<<<TC>>>") : end]
 	var payload struct {
@@ -496,6 +903,79 @@ func parseToolCallJSONBlock(text string) ToolParseResult {
 		return ToolParseResult{Content: strings.TrimSpace(text)}
 	}
 	return ToolParseResult{ToolCalls: calls, Content: strings.TrimSpace(stripped)}
+}
+
+func parseToolCallRawJSON(text string) ToolParseResult {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ToolParseResult{Content: ""}
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return ToolParseResult{Content: trimmed}
+	}
+	calls := parseToolCallsFromAny(payload)
+	if len(calls) == 0 {
+		return ToolParseResult{Content: trimmed}
+	}
+	return ToolParseResult{ToolCalls: calls, Content: ""}
+}
+
+func parseToolCallTaggedBlock(text string) ToolParseResult {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ToolParseResult{Content: ""}
+	}
+	const openTag = "<tool_call>"
+	const closeTag = "</tool_call>"
+	start := strings.Index(trimmed, openTag)
+	if start < 0 {
+		return ToolParseResult{Content: trimmed}
+	}
+	end := strings.Index(trimmed[start+len(openTag):], closeTag)
+	if end < 0 {
+		return ToolParseResult{Content: trimmed}
+	}
+	innerStart := start + len(openTag)
+	innerEnd := innerStart + end
+	inner := strings.TrimSpace(trimmed[innerStart:innerEnd])
+	if !strings.HasPrefix(inner, "<") {
+		return ToolParseResult{Content: trimmed}
+	}
+	nameEnd := strings.Index(inner, ">")
+	if nameEnd <= 1 {
+		return ToolParseResult{Content: trimmed}
+	}
+	name := strings.TrimSpace(inner[1:nameEnd])
+	if name == "" || strings.ContainsAny(name, " \t\r\n/") {
+		return ToolParseResult{Content: trimmed}
+	}
+	closeInnerTag := "</" + name + ">"
+	closeInnerIdx := strings.LastIndex(inner, closeInnerTag)
+	if closeInnerIdx < 0 {
+		return ToolParseResult{Content: trimmed}
+	}
+	argText := strings.TrimSpace(inner[nameEnd+1 : closeInnerIdx])
+	if argText == "" {
+		return ToolParseResult{Content: trimmed}
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(argText), &payload); err != nil {
+		return ToolParseResult{Content: trimmed}
+	}
+	argBytes, err := json.Marshal(payload)
+	if err != nil {
+		return ToolParseResult{Content: trimmed}
+	}
+	content := strings.TrimSpace(trimmed[:start] + trimmed[innerEnd+len(closeTag):])
+	return ToolParseResult{
+		ToolCalls: []ToolCall{{
+			ID:        newID("call"),
+			Name:      name,
+			Arguments: string(argBytes),
+		}},
+		Content: content,
+	}
 }
 
 func extractFirstJSONBlock(text string) (string, string, bool) {
@@ -836,4 +1316,18 @@ func newID(prefix string) string {
 func sseData(obj map[string]any) string {
 	b, _ := json.Marshal(obj)
 	return "data: " + string(b) + "\n\n"
+}
+
+// sseEvent emits a typed Responses SSE event in the official example format:
+//
+//	event: <name>
+//	data:  <json with {type:<name>, ...}>
+func sseEvent(event string, obj map[string]any) string {
+	if obj == nil {
+		obj = map[string]any{}
+	}
+	// Enforce data.type == event for strict client/SDK compatibility.
+	obj["type"] = event
+	b, _ := json.Marshal(obj)
+	return "event: " + event + "\n" + "data: " + string(b) + "\n\n"
 }
