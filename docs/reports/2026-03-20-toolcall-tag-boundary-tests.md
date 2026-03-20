@@ -33,6 +33,26 @@
    - 结果：PASS
    - 摘要：`/v1/chat/completions` 与 `/v1/responses` 均返回 `200`，tool call flow 正常。
 
+## Re-Verification (Independent)
+
+执行时间：2026-03-20 17:01:54 +08:00 (Asia/Shanghai)
+
+1. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'TestParseToolSentinelTagWrappedToolCall|TestParseToolSentinelTagWrappedToolCallPreservesOuterText|TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText' -v`
+   - 结果：PASS
+   - 摘要：命令执行通过；`TestParseToolSentinelTagWrappedToolCall`、`TestParseToolSentinelTagWrappedToolCallPreservesOuterText`、`TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText` 均被匹配并运行。
+
+2. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -run 'TestResponsesStreamTagWrappedToolCallUsesFunctionEventsNotOutputText|TestResponsesStreamFragmentedTagWrappedToolCallUsesFunctionEventsNotOutputText' -v`
+   - 结果：PASS
+   - 摘要：命令执行通过；`TestResponsesStreamTagWrappedToolCallUsesFunctionEventsNotOutputText` 与 `TestResponsesStreamFragmentedTagWrappedToolCallUsesFunctionEventsNotOutputText` 均被匹配并运行。
+
+3. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -v`
+   - 结果：PASS
+   - 摘要：`internal/openai` 全量测试通过（包含 malformed tag fallback 用例）。
+
+4. `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -v`
+   - 结果：PASS
+   - 摘要：`internal/http` 全量测试通过（包含 fragmented tag stream 用例）。
+
 ## Notes
 
 - 本轮没有修改 `internal/openai/compat.go` 或其他生产代码。
