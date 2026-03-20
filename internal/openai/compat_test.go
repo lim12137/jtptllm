@@ -459,6 +459,31 @@ func TestParseToolSentinelTagWrappedToolCall(t *testing.T) {
 	}
 }
 
+func TestParseToolSentinelTagWrappedToolCallPreservesOuterText(t *testing.T) {
+	text := "before <tool_call><multi_tool_use.parallel>{\"tool_uses\":[{\"recipient_name\":\"functions.shell_command\",\"parameters\":{\"command\":\"Get-Date\"}}]}</multi_tool_use.parallel></tool_call> after"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "multi_tool_use.parallel" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.Content != "before  after" {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
+func TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText(t *testing.T) {
+	text := "prefix <tool_call><multi_tool_use.parallel>{\"tool_uses\":[}</multi_tool_use.parallel></tool_call> suffix"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 0 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != strings.TrimSpace(text) {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
 func TestParseToolSentinelFallbackActionToolInput(t *testing.T) {
 	text := "answer\n```json\n{\"action\":\"call_tool\",\"tool\":\"mcp__kqSse__checkLoginStatus\",\"input\":{}}\n```"
 	res := ParseToolSentinel(text)

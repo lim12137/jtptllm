@@ -1263,6 +1263,69 @@ func TestResponsesStreamTagWrappedToolCallUsesFunctionEventsNotOutputText(t *tes
 	}
 }
 
+func TestResponsesStreamFragmentedTagWrappedToolCallUsesFunctionEventsNotOutputText(t *testing.T) {
+	fragments := []string{
+		"<tool_call><multi_tool_use.parallel>",
+		"{\"tool_uses\":[{\"recipient_name\":\"functions.shell_command\",",
+		"\"parameters\":{\"command\":\"Get-Date\"}}]}",
+		"</multi_tool_use.parallel></tool_call>",
+	}
+	var sse strings.Builder
+	for _, part := range fragments {
+		evt := map[string]any{
+			"data": map[string]any{
+				"message": map[string]any{"text": part},
+			},
+		}
+		b, err := json.Marshal(evt)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		sse.WriteString("data: ")
+		sse.WriteString(string(b))
+		sse.WriteString("\n\n")
+	}
+	end, _ := json.Marshal(map[string]any{"end": true})
+	sse.WriteString("data: ")
+	sse.WriteString(string(end))
+	sse.WriteString("\n\n")
+
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse.String())),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":  "agent",
+		"stream": true,
+		"input":  "run tool",
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(bodyBytes))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	evts := parseSSEEvents(t, rec.Body.String())
+
+	if len(eventsByType(evts, "response.output_text.delta")) != 0 {
+		t.Fatalf("tool call stream must not emit response.output_text.delta: %s", rec.Body.String())
+	}
+	if len(eventsByType(evts, "response.function_call_arguments.delta")) < 1 {
+		t.Fatalf("missing response.function_call_arguments.delta: %s", rec.Body.String())
+	}
+	done := eventsByType(evts, "response.function_call_arguments.done")
+	if len(done) != 1 {
+		t.Fatalf("missing response.function_call_arguments.done: %s", rec.Body.String())
+	}
+	if done[0].Data["name"] != "multi_tool_use.parallel" {
+		t.Fatalf("function name=%v", done[0].Data["name"])
+	}
+}
+
 func TestIOLoggingEnabled(t *testing.T) {
 	buf := &bytes.Buffer{}
 	old := log.Writer()
