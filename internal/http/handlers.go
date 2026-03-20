@@ -161,6 +161,11 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			}
 		}
 		respPayload := openai.BuildChatCompletionResponseFromText(text, parsed.Model)
+		usage := openai.NormalizeChatUsage(extractGatewayUsage(runResp))
+		if usage == nil {
+			usage = openai.ChatUsageFromCharCount(parsed.Prompt, text)
+		}
+		respPayload["usage"] = usage
 		logIO(map[string]any{
 			"dir":         "out",
 			"path":        r.URL.Path,
@@ -293,6 +298,11 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			}
 		}
 		respPayload := openai.BuildResponsesResponseFromText(text, parsed.Model)
+		usage := openai.NormalizeResponsesUsage(extractGatewayUsage(runResp))
+		if usage == nil {
+			usage = openai.ResponsesUsageFromCharCount(parsed.Prompt, text)
+		}
+		respPayload["usage"] = usage
 		logIO(map[string]any{
 			"dir":         "out",
 			"path":        r.URL.Path,
@@ -350,7 +360,7 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	streamOutput, err := streamResponses(w, resp.Body, parsed.Model)
+	streamOutput, err := streamResponses(w, resp.Body, parsed.Model, parsed.Prompt)
 	if err != nil {
 		log.Printf("stream responses error: %v", err)
 		return
@@ -483,6 +493,27 @@ func extractGatewayTextFromNonStream(runResp map[string]any) string {
 		return extractTextFromMessage(data)
 	}
 	return extractTextFromMessage(runResp)
+}
+
+func extractGatewayUsage(runResp map[string]any) map[string]any {
+	if runResp == nil {
+		return nil
+	}
+	if u, ok := runResp["usage"].(map[string]any); ok {
+		return u
+	}
+	if data, ok := runResp["data"].(map[string]any); ok {
+		if u, ok := data["usage"].(map[string]any); ok {
+			return u
+		}
+		if u, ok := data["tokenUsage"].(map[string]any); ok {
+			return u
+		}
+		if u, ok := data["token_usage"].(map[string]any); ok {
+			return u
+		}
+	}
+	return nil
 }
 
 func gatewayRunError(runResp map[string]any) (string, bool) {
@@ -811,7 +842,7 @@ func streamChatCompletionFromResponse(w stdhttp.ResponseWriter, resp map[string]
 	return nil
 }
 
-func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) (string, error) {
+func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string, inputPrompt string) (string, error) {
 	flusher, ok := w.(stdhttp.Flusher)
 	if !ok {
 		return "", errors.New("streaming not supported")
@@ -821,30 +852,252 @@ func streamResponses(w stdhttp.ResponseWriter, body io.Reader, model string) (st
 
 	created := time.Now().Unix()
 	respID := newID("resp")
-	createdEvt := map[string]any{"type": "response.created", "response": map[string]any{"id": respID, "model": model, "created_at": created}}
-	if _, err := io.WriteString(w, sseData(createdEvt)); err != nil {
+	seq := 0
+
+	baseResp := map[string]any{
+		"id":         respID,
+		"object":     "response",
+		"created_at": created,
+		"model":      model,
+		"status":     "in_progress",
+		"output":     []any{},
+		"usage":      nil, // created/in_progress usage must be null
+	}
+
+	createdEvt := map[string]any{
+		"type":            "response.created",
+		"sequence_number": seq,
+		"response":        baseResp,
+	}
+	if _, err := io.WriteString(w, sseEvent("response.created", createdEvt)); err != nil {
 		return "", err
 	}
+	seq++
+
+	inProgressEvt := map[string]any{
+		"type":            "response.in_progress",
+		"sequence_number": seq,
+		"response":        baseResp,
+	}
+	if _, err := io.WriteString(w, sseEvent("response.in_progress", inProgressEvt)); err != nil {
+		return "", err
+	}
+	seq++
+
 	flusher.Flush()
 
 	var full strings.Builder
-	if err := streamGatewayDeltas(body, func(delta string) error {
+	rawUsage, err := streamGatewayDeltasWithUsage(body, func(delta string) error {
 		full.WriteString(delta)
-		chunk := map[string]any{"type": "response.output_text.delta", "delta": delta, "response_id": respID}
-		if _, err := io.WriteString(w, sseData(chunk)); err != nil {
-			return err
-		}
-		flusher.Flush()
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return full.String(), err
 	}
 
-	doneEvt := map[string]any{"type": "response.completed", "response_id": respID}
-	if _, err := io.WriteString(w, sseData(doneEvt)); err != nil {
-		return full.String(), err
+	text := full.String()
+	parsed := openai.ParseToolSentinel(text)
+	outputText := text
+	var outputs []any
+
+	if len(parsed.ToolCalls) > 0 {
+		outputText = parsed.Content
+		outputs = make([]any, 0, len(parsed.ToolCalls))
+		for outputIndex, call := range parsed.ToolCalls {
+			itemID := newID("fc")
+			callID := strings.TrimSpace(call.ID)
+			if callID == "" {
+				callID = newID("call")
+			}
+
+			addedItem := map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "in_progress",
+				"call_id":   callID,
+				"name":      call.Name,
+				"arguments": "",
+			}
+			addedEvt := map[string]any{
+				"type":            "response.output_item.added",
+				"sequence_number": seq,
+				"response_id":     respID,
+				"output_index":    outputIndex,
+				"item":            addedItem,
+			}
+			if _, err := io.WriteString(w, sseEvent("response.output_item.added", addedEvt)); err != nil {
+				return full.String(), err
+			}
+			seq++
+
+			argsDeltaEvt := map[string]any{
+				"type":            "response.function_call_arguments.delta",
+				"sequence_number": seq,
+				"response_id":     respID,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"call_id":         callID,
+				"delta":           call.Arguments,
+			}
+			if _, err := io.WriteString(w, sseEvent("response.function_call_arguments.delta", argsDeltaEvt)); err != nil {
+				return full.String(), err
+			}
+			seq++
+
+			argsDoneEvt := map[string]any{
+				"type":            "response.function_call_arguments.done",
+				"sequence_number": seq,
+				"response_id":     respID,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"call_id":         callID,
+				"name":            call.Name,
+				"arguments":       call.Arguments,
+			}
+			if _, err := io.WriteString(w, sseEvent("response.function_call_arguments.done", argsDoneEvt)); err != nil {
+				return full.String(), err
+			}
+			seq++
+
+			doneItem := map[string]any{
+				"id":        itemID,
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   callID,
+				"name":      call.Name,
+				"arguments": call.Arguments,
+			}
+			itemDoneEvt := map[string]any{
+				"type":            "response.output_item.done",
+				"sequence_number": seq,
+				"response_id":     respID,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"item":            doneItem,
+			}
+			if _, err := io.WriteString(w, sseEvent("response.output_item.done", itemDoneEvt)); err != nil {
+				return full.String(), err
+			}
+			seq++
+			outputs = append(outputs, doneItem)
+		}
+	} else {
+		itemID := newID("msg")
+		outputIndex := 0
+		contentIndex := 0
+		item := map[string]any{
+			"id":      itemID,
+			"type":    "message",
+			"role":    "assistant",
+			"status":  "in_progress",
+			"content": []any{}, // official example uses empty content for output_item.added
+		}
+		addedEvt := map[string]any{
+			"type":            "response.output_item.added",
+			"sequence_number": seq,
+			"response_id":     respID,
+			"output_index":    outputIndex,
+			"item":            item,
+		}
+		if _, err := io.WriteString(w, sseEvent("response.output_item.added", addedEvt)); err != nil {
+			return "", err
+		}
+		seq++
+
+		partAddedEvt := map[string]any{
+			"type":            "response.content_part.added",
+			"sequence_number": seq,
+			"response_id":     respID,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"content_index":   contentIndex,
+			"part":            map[string]any{"type": "output_text", "text": ""},
+		}
+		if _, err := io.WriteString(w, sseEvent("response.content_part.added", partAddedEvt)); err != nil {
+			return "", err
+		}
+		seq++
+
+		if outputText != "" {
+			textDeltaEvt := map[string]any{
+				"type":            "response.output_text.delta",
+				"sequence_number": seq,
+				"response_id":     respID,
+				"item_id":         itemID,
+				"output_index":    outputIndex,
+				"content_index":   contentIndex,
+				"delta":           outputText,
+			}
+			if _, err := io.WriteString(w, sseEvent("response.output_text.delta", textDeltaEvt)); err != nil {
+				return "", err
+			}
+			seq++
+		}
+
+		textDoneEvt := map[string]any{
+			"type":            "response.output_text.done",
+			"sequence_number": seq,
+			"response_id":     respID,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"content_index":   contentIndex,
+			"text":            outputText,
+		}
+		if _, err := io.WriteString(w, sseEvent("response.output_text.done", textDoneEvt)); err != nil {
+			return "", err
+		}
+		seq++
+
+		partDoneEvt := map[string]any{
+			"type":            "response.content_part.done",
+			"sequence_number": seq,
+			"response_id":     respID,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"content_index":   contentIndex,
+			"part":            map[string]any{"type": "output_text", "text": outputText},
+		}
+		if _, err := io.WriteString(w, sseEvent("response.content_part.done", partDoneEvt)); err != nil {
+			return "", err
+		}
+		seq++
+
+		item["status"] = "completed"
+		item["content"] = []any{map[string]any{"type": "output_text", "text": outputText}}
+		itemDoneEvt := map[string]any{
+			"type":            "response.output_item.done",
+			"sequence_number": seq,
+			"response_id":     respID,
+			"item_id":         itemID,
+			"output_index":    outputIndex,
+			"item":            item,
+		}
+		if _, err := io.WriteString(w, sseEvent("response.output_item.done", itemDoneEvt)); err != nil {
+			return "", err
+		}
+		seq++
+		outputs = append(outputs, item)
 	}
-	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
+
+	usage := openai.NormalizeResponsesUsage(rawUsage)
+	if usage == nil {
+		usage = openai.ResponsesUsageFromCharCount(inputPrompt, outputText)
+	}
+	doneEvt := map[string]any{
+		"type":            "response.completed",
+		"sequence_number": seq,
+		"response": map[string]any{
+			"id":          respID,
+			"object":      "response",
+			"created_at":  created,
+			"model":       model,
+			"status":      "completed",
+			"output":      outputs,
+			"output_text": outputText,
+			"usage":       usage,
+		},
+	}
+	if _, err := io.WriteString(w, sseEvent("response.completed", doneEvt)); err != nil {
 		return full.String(), err
 	}
 	flusher.Flush()
@@ -907,6 +1160,55 @@ func streamGatewayDeltas(body io.Reader, emit func(string) error) error {
 	return scanner.Err()
 }
 
+func streamGatewayDeltasWithUsage(body io.Reader, emit func(string) error) (map[string]any, error) {
+	scanner := bufio.NewScanner(body)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	full := ""
+	var lastUsage map[string]any
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		payload := line
+		if strings.HasPrefix(payload, "data:") {
+			payload = strings.TrimSpace(strings.TrimPrefix(payload, "data:"))
+		}
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			break
+		}
+		var evt map[string]any
+		if err := json.Unmarshal([]byte(payload), &evt); err != nil {
+			continue
+		}
+		if u := extractGatewayUsage(evt); u != nil {
+			lastUsage = u
+		}
+		if msg, ok := gatewayRunError(evt); ok {
+			if strings.TrimSpace(msg) == "" {
+				msg = "upstream run failed"
+			}
+			return lastUsage, errors.New(msg)
+		}
+		if isGatewayEndEvent(evt) {
+			break
+		}
+		raw := extractGatewayTextDelta(evt)
+		delta := smartDelta(&full, raw)
+		if delta == "" {
+			continue
+		}
+		if err := emit(delta); err != nil {
+			return lastUsage, err
+		}
+	}
+	return lastUsage, scanner.Err()
+}
+
 func firstChoiceMessage(resp map[string]any) map[string]any {
 	choices, ok := resp["choices"].([]any)
 	if !ok || len(choices) == 0 {
@@ -950,6 +1252,20 @@ func smartDelta(full *string, chunk string) string {
 func sseData(obj map[string]any) string {
 	b, _ := json.Marshal(obj)
 	return "data: " + string(b) + "\n\n"
+}
+
+// sseEvent emits a typed Responses SSE event in the official example format:
+//
+//	event: <name>
+//	data:  <json with {type:<name>, ...}>
+func sseEvent(event string, obj map[string]any) string {
+	if obj == nil {
+		obj = map[string]any{}
+	}
+	// Enforce data.type == event for strict client/SDK compatibility.
+	obj["type"] = event
+	b, _ := json.Marshal(obj)
+	return "event: " + event + "\n" + "data: " + string(b) + "\n\n"
 }
 
 func newID(prefix string) string {
