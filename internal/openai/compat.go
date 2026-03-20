@@ -319,9 +319,15 @@ func injectModelMarker(model string, prompt string) string {
 
 // ChatUsageFromCharCount is a lightweight fallback when upstream usage is missing.
 // It intentionally counts Unicode code points (runes) rather than bytes.
+const usageFallbackRuneMultiplier = 2
+
+func scaledRuneCountForUsage(s string) int {
+	return utf8.RuneCountInString(s) * usageFallbackRuneMultiplier
+}
+
 func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
-	p := utf8.RuneCountInString(prompt)
-	c := utf8.RuneCountInString(completion)
+	p := scaledRuneCountForUsage(prompt)
+	c := scaledRuneCountForUsage(completion)
 	return map[string]any{
 		"prompt_tokens":     p,
 		"completion_tokens": c,
@@ -332,8 +338,8 @@ func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
 // ResponsesUsageFromCharCount is a lightweight fallback when upstream usage is missing.
 // It intentionally counts Unicode code points (runes) rather than bytes.
 func ResponsesUsageFromCharCount(input string, output string) map[string]any {
-	in := utf8.RuneCountInString(input)
-	out := utf8.RuneCountInString(output)
+	in := scaledRuneCountForUsage(input)
+	out := scaledRuneCountForUsage(output)
 	return map[string]any{
 		"input_tokens":  in,
 		"output_tokens": out,

@@ -258,8 +258,8 @@ func TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing(t *testing
 	if !ok {
 		t.Fatalf("missing usage: %v", out["usage"])
 	}
-	// prompt is "user: hi" (see TestChatCompletionsNonStream), completion is "智能体输出文本".
-	if usage["prompt_tokens"] != float64(8) || usage["completion_tokens"] != float64(7) || usage["total_tokens"] != float64(15) {
+	// prompt is "user: hi" (8 runes), completion is "智能体输出文本" (7 runes), with fallback K=2.
+	if usage["prompt_tokens"] != float64(16) || usage["completion_tokens"] != float64(14) || usage["total_tokens"] != float64(30) {
 		t.Fatalf("usage=%v", usage)
 	}
 }
@@ -460,8 +460,8 @@ func TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing usage: %v", out["usage"])
 	}
-	// input is "hi" (2 runes), output is "回应" (2 runes).
-	if usage["input_tokens"] != float64(2) || usage["output_tokens"] != float64(2) || usage["total_tokens"] != float64(4) {
+	// input is "hi" (2 runes), output is "回应" (2 runes), with fallback K=2.
+	if usage["input_tokens"] != float64(4) || usage["output_tokens"] != float64(4) || usage["total_tokens"] != float64(8) {
 		t.Fatalf("usage=%v", usage)
 	}
 }
@@ -1089,8 +1089,8 @@ func TestResponsesStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing usage: %v", resp["usage"])
 	}
-	// input is "hi" (2 runes), output is "hello" (5 runes).
-	if usage["input_tokens"] != float64(2) || usage["output_tokens"] != float64(5) || usage["total_tokens"] != float64(7) {
+	// input is "hi" (2 runes), output is "hello" (5 runes), with fallback K=2.
+	if usage["input_tokens"] != float64(4) || usage["output_tokens"] != float64(10) || usage["total_tokens"] != float64(14) {
 		t.Fatalf("usage=%v", usage)
 	}
 }

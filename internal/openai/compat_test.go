@@ -13,6 +13,20 @@ func TestChatToPrompt(t *testing.T) {
 	}
 }
 
+func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
+	usage := ChatUsageFromCharCount("hi", "回应")
+	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {
+		t.Fatalf("usage=%v", usage)
+	}
+}
+
+func TestResponsesUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
+	usage := ResponsesUsageFromCharCount("你好", "abc")
+	if usage["input_tokens"] != 4 || usage["output_tokens"] != 6 || usage["total_tokens"] != 10 {
+		t.Fatalf("usage=%v", usage)
+	}
+}
+
 func TestParseChatRequestWithToolsAddsSystemPrefix(t *testing.T) {
 	payload := map[string]any{
 		"model":    "agent",
