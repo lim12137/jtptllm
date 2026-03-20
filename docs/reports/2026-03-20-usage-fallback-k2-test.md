@@ -8,7 +8,7 @@
 
 ### 1) OpenAI 层聚焦测试
 命令：
-`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'Usage|CharCount|RuneCount' -v`
+`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'TestChatUsageFromCharCountScalesByRuneMultiplier|TestResponsesUsageFromCharCountScalesByRuneMultiplier' -v`
 
 结果摘要：
 - `TestChatUsageFromCharCountScalesByRuneMultiplier` 失败
@@ -17,7 +17,7 @@
 
 ### 2) HTTP 层聚焦测试
 命令：
-`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -run 'Usage|Fallback' -v`
+`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -run 'TestChatCompletionsNonStreamPassesThroughUsage|TestResponsesNonStreamPassesThroughUsage|TestResponsesStreamPassesThroughUsage|TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing|TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing|TestResponsesStreamFallsBackToCharCountUsageWhenMissing' -v`
 
 结果摘要：
 - 透传测试通过（`PassesThroughUsage`）
@@ -28,7 +28,7 @@
 
 ### 1) OpenAI 层聚焦测试
 命令：
-`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'Usage|CharCount|RuneCount' -v`
+`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'TestChatUsageFromCharCountScalesByRuneMultiplier|TestResponsesUsageFromCharCountScalesByRuneMultiplier' -v`
 
 结果摘要：
 - PASS
@@ -36,11 +36,12 @@
 
 ### 2) HTTP 层聚焦测试
 命令：
-`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -run 'Usage|Fallback' -v`
+`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -run 'TestChatCompletionsNonStreamPassesThroughUsage|TestResponsesNonStreamPassesThroughUsage|TestResponsesStreamPassesThroughUsage|TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing|TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing|TestResponsesStreamFallsBackToCharCountUsageWhenMissing' -v`
 
 结果摘要：
 - PASS
-- 3 个 fallback 测试通过，透传测试保持通过
+- 透传测试通过：`TestChatCompletionsNonStreamPassesThroughUsage`、`TestResponsesNonStreamPassesThroughUsage`、`TestResponsesStreamPassesThroughUsage`
+- fallback 测试通过：`TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing`、`TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing`、`TestResponsesStreamFallsBackToCharCountUsageWhenMissing`
 
 ### 3) OpenAI 包级回归
 命令：
@@ -55,6 +56,34 @@
 
 结果摘要：
 - PASS（全部通过）
+
+## 复验（精确命令，2026-03-20 22:13:39 +08:00）
+
+### OpenAI 精确命中验证
+命令：
+`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/openai -run 'TestChatUsageFromCharCountScalesByRuneMultiplier|TestResponsesUsageFromCharCountScalesByRuneMultiplier' -v`
+
+命中测试名：
+- `TestChatUsageFromCharCountScalesByRuneMultiplier`
+- `TestResponsesUsageFromCharCountScalesByRuneMultiplier`
+
+结果摘要：
+- PASS
+
+### HTTP 透传 + fallback 精确命中验证
+命令：
+`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -run 'TestChatCompletionsNonStreamPassesThroughUsage|TestResponsesNonStreamPassesThroughUsage|TestResponsesStreamPassesThroughUsage|TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing|TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing|TestResponsesStreamFallsBackToCharCountUsageWhenMissing' -v`
+
+命中测试名：
+- `TestChatCompletionsNonStreamPassesThroughUsage`
+- `TestResponsesNonStreamPassesThroughUsage`
+- `TestResponsesStreamPassesThroughUsage`
+- `TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing`
+- `TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing`
+- `TestResponsesStreamFallsBackToCharCountUsageWhenMissing`
+
+结果摘要：
+- PASS
 
 ## 结论
 - `usage` fallback 已按 `runeCount * 2` 生效于 chat 非流式、responses 非流式、responses 流式。
