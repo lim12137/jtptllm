@@ -21,7 +21,7 @@
 - 新增根目录脚本：`restart_proxy_8022_go_debug.bat`。
 - 优先复用 `scripts/restart_proxy.ps1` 已有能力：
   - 杀掉占用 `8022` 的旧进程。
-  - rotate `proxy_8022.log` / `proxy_8022.err`。
+  - rotate `bin\logs\proxy_8022.log` / `bin\logs\proxy_8022.err`。
   - 启动后轮询 `/health`。
 - 为 `scripts/restart_proxy.ps1` 增加一种“启动命令模式”或等价参数，使其既能启动 `bin/proxy.exe`，也能启动：
   - `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe run ./cmd/proxy`
@@ -32,15 +32,15 @@
   - 调用 PowerShell 重启逻辑
 
 ## 日志与调试开关
-- 调试脚本默认设置 `PROXY_LOG_IO=1`，确保请求/响应会进入 `proxy_8022.err`。
-- stdout 继续写入 `proxy_8022.log`，stderr 继续写入 `proxy_8022.err`。
+- 调试脚本默认设置 `PROXY_LOG_IO=1`，确保请求/响应会进入 `bin\logs\proxy_8022.err`。
+- stdout 继续写入 `bin\logs\proxy_8022.log`，stderr 继续写入 `bin\logs\proxy_8022.err`。
 - 每次重启前对旧日志做时间戳归档，避免多次调试日志互相覆盖。
 - 不修改普通版脚本的默认日志级别与默认环境变量，避免把高噪声日志带入日常使用。
 
 ## 验证方式
 1. 执行 `restart_proxy_8022_go_debug.bat`。
 2. 访问 `http://127.0.0.1:8022/health`，确认返回 `200` 与 `{"ok":true}`。
-3. 检查 `proxy_8022.err`，确认存在启动日志以及 `IOLOG` 记录。
+3. 检查 `bin\logs\proxy_8022.err`，确认存在启动日志以及 `IOLOG` 记录。
 4. 用 Cherry Studio 或本地最小请求触发一次 `/v1/chat/completions`，确认日志中可见实际 `tools`、`tool_choice`、prompt 注入结果。
 5. 运行 `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./... -v`，确保脚本相关改动未影响现有 Go 逻辑。
 
@@ -54,3 +54,5 @@
 - 不删除或回滚已有 `bin/proxy.exe`、`bin/proxy.exe~` 本地修改。
 - 不在本次设计中扩展命令行参数、端口动态配置或多实例管理。
 - 不处理上游网关逻辑本身，只解决“如何稳定跑最新 Go 代码并拿到调试日志”的启动问题。
+
+

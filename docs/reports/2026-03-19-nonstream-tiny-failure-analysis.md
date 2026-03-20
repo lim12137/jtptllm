@@ -75,7 +75,7 @@ Hello! 👋 I'm DeepSeek, an AI assistant created by DeepSeek.
 
 ## 日志证据
 
-`proxy_8022.err` 中对应时间段日志如下。
+`bin\logs\proxy_8022.err` 中对应时间段日志如下。
 
 ```text
 2026/03/19 06:41:51 IOLOG {"dir":"in","model":"deepseek","path":"/v1/chat/completions","payload":{"messages":[{"content":"hi","role":"user"}],"model":"deepseek","stream":false},"prompt":"**model = deepseek**\nuser: hi","session_id":"b7a53a39-db23-4efe-87e9-9ce6caa1ef4a","session_key":"cid:tiny-ns-deepseek","stream":false}
@@ -242,3 +242,5 @@ curl.exe -sS -D - -X POST "http://127.0.0.1:8022/v1/chat/completions" ^
 定向测试：`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./internal/http -v` PASS。
 
 全量测试：`C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./... -v` PASS。
+
+

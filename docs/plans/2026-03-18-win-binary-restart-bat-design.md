@@ -67,7 +67,7 @@
   - 启动 `bin\proxy.exe`，工作目录为仓库根目录（确保相对路径配置一致）。
   - 可选：支持设置 `PROXY_LOG_IO=1`（用于调试 IO 日志；默认建议为 0）。
 - 输出/日志：
-  - 推荐将 stdout/stderr 重定向到 `proxy_8022.log` / `proxy_8022.err`（便于排查启动失败与 IO 日志）。
+  - 推荐将 stdout/stderr 重定向到 `bin\logs\proxy_8022.log` / `bin\logs\proxy_8022.err`（便于排查启动失败与 IO 日志）。
 
 BAT 入口行为（`restart_proxy_8022_exe.bat`）：
 
@@ -102,7 +102,7 @@ BAT 入口行为（`restart_proxy_8022_exe.bat`）：
   - 期望产物：`bin/proxy.exe`
 - 重启验证：
   - `.\restart_proxy_8022_exe.bat`
-  - 期望：端口 `8022` 被占用时能清理并重启；日志写入 `proxy_8022.log`/`proxy_8022.err`
+  - 期望：端口 `8022` 被占用时能清理并重启；日志写入 `bin\logs\proxy_8022.log`/`bin\logs\proxy_8022.err`
 - 工具调用 smoke（需要 proxy 运行中）：
   - `powershell -File scripts/codex_toolcall_smoke.ps1`
 
@@ -113,4 +113,6 @@ BAT 入口行为（`restart_proxy_8022_exe.bat`）：
 - 不引入新的端口/地址配置系统（端口固定 `8022`）。
 - 不处理 Windows 防火墙规则自动放行（已有 `expose_port_8022.bat` 可单独使用）。
 - 不改变现有 Go 服务监听逻辑（仍由 `cmd/proxy/main.go` 控制）。
-- 不清理或提交当前工作区中与本功能无关的未跟踪文件。*** End Patch}]}commentary to=functions.apply_patch  玩大发快三json
+- 不清理或提交当前工作区中与本功能无关的未跟踪文件。
+
+

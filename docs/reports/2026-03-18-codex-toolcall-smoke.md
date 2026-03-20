@@ -12,15 +12,15 @@
    - Command: `powershell -File scripts/codex_toolcall_smoke.ps1`
    - Result: **502 Bad Gateway** (upstream `/agent/api/run` returned 500).
 2. Codex CLI run:
-   - Command: `node C:/Users/Administrator/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js exec "Run scripts/codex_toolcall_smoke.ps1 and summarize tool-call stability based on proxy_8022.log"`
-   - Result: script executed with 200 responses, but `proxy_8022.log` was empty.
+   - Command: `node C:/Users/Administrator/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js exec "Run scripts/codex_toolcall_smoke.ps1 and summarize tool-call stability based on bin\logs\proxy_8022.log"`
+   - Result: script executed with 200 responses, but `bin\logs\proxy_8022.log` was empty.
 3. Codex CLI log review (stderr log):
-   - Command: `node C:/Users/Administrator/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js exec "Summarize tool-call stability based on IOLOG entries in proxy_8022.err (not proxy_8022.log). Focus on whether tool_calls were produced or only plain text."`
+   - Command: `node C:/Users/Administrator/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js exec "Summarize tool-call stability based on IOLOG entries in bin\logs\proxy_8022.err (not bin\logs\proxy_8022.log). Focus on whether tool_calls were produced or only plain text."`
    - Result: Codex concluded **no tool_calls were produced**, only plain text outputs.
 
 ## Log Location
-- `proxy_8022.log`: empty (stdout).
-- `proxy_8022.err`: contains IOLOG entries (stderr) due to `log.Printf` defaulting to stderr.
+- `bin\logs\proxy_8022.log`: empty (stdout).
+- `bin\logs\proxy_8022.err`: contains IOLOG entries (stderr) due to `log.Printf` defaulting to stderr.
 
 ## Findings (IOLOG)
 - Requests contained `tools` and `tool_choice` for `get_weather`.
@@ -53,3 +53,5 @@ Tool-call **not stable / not triggered** in this smoke run. The proxy forwarded 
 - Rebuilt `bin/proxy.exe` after streaming toolcall SSE fix.
 - Request: `stream=true` with tools/tool_choice=auto (李茗考勤场景).
 - Result: SSE returned `tool_calls` chunk + `finish_reason=tool_calls` + `[DONE]`.
+
+

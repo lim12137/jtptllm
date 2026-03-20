@@ -11,7 +11,7 @@
 - Result: `ok=4`, `fail=6`, all failures `502`.
 - Median successful latency: ~`260-345ms`.
 - Failed latency: ~`1.3-1.6s`.
-- Log evidence: multiple `PROCESS_CONCURRENCY_LOCK` entries in `proxy_8022.err`.
+- Log evidence: multiple `PROCESS_CONCURRENCY_LOCK` entries in `bin\logs\proxy_8022.err`.
 
 ## Concurrency Test B (isolated session keys)
 - Method: 10 parallel requests, each request has unique `x-client-id`.
@@ -36,3 +36,5 @@
 1. Add retry/backoff and explicit mapping for upstream lock errors in proxy handlers.
 2. Add lightweight load guard by session key to serialize same-session requests before hitting upstream.
 3. Re-run tests after upstream stabilization window.
+
+

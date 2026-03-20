@@ -56,7 +56,7 @@ Implement:
 - Wait for port to release with a short timeout.
 - Start `bin\proxy.exe` from repo root.
 - Optional `-LogIO` switch sets `PROXY_LOG_IO=1`.
-- Redirect stdout/stderr to `proxy_8022.log` and `proxy_8022.err`.
+- Redirect stdout/stderr to `bin\logs\proxy_8022.log` and `bin\logs\proxy_8022.err`.
 
 **Step 2: Smoke run the script (no build)**
 
@@ -182,3 +182,5 @@ Expected: commit contains only doc updates.
 - Scripts: `chore: add windows build script`, `chore: add restart script for proxy.exe`, `chore: add restart_proxy_8022_exe.bat entrypoint`
 - Validation report: `docs: add win binary restart validation report`
 - Optional doc alignment: `docs: align restart script references`
+
+

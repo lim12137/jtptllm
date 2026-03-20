@@ -110,7 +110,7 @@ Run (example):
 **Step 2: Codex CLI 执行**
 
 Run:
-`codex exec "Run scripts/codex_toolcall_smoke.ps1 and summarize tool-call stability based on proxy_8022.log"`
+`codex exec "Run scripts/codex_toolcall_smoke.ps1 and summarize tool-call stability based on bin\logs\proxy_8022.log"`
 
 **Step 3: 记录结论**
 
@@ -126,3 +126,5 @@ Run:
 git add docs/reports/2026-03-18-codex-toolcall-smoke.md
 git commit -m "docs: add codex toolcall smoke report"
 ```
+
+

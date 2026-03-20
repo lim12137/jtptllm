@@ -87,8 +87,8 @@ git status -sb
 ### Task 3: 日志与健康检查验证
 
 **Files:**
-- Verify: `proxy_8022.log`
-- Verify: `proxy_8022.err`
+- Verify: `bin\logs\proxy_8022.log`
+- Verify: `bin\logs\proxy_8022.err`
 
 **Step 1: 运行调试脚本**
 
@@ -107,8 +107,8 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8022/health | Select-Object 
 **Step 3: 日志确认**
 
 ```powershell
-Get-Content -Tail 50 proxy_8022.err
-Get-Content -Tail 50 proxy_8022.log
+Get-Content -Tail 50 bin\logs\proxy_8022.err
+Get-Content -Tail 50 bin\logs\proxy_8022.log
 ```
 
 **Expected:** 日志存在且包含最新启动信息。
@@ -184,5 +184,7 @@ git commit -m "docs: add go run debug restart validation"
 **验收标准：**
 - 调试脚本成功启动 `go run ./cmd/proxy`
 - `/health` 返回 `{"ok":true}`
-- `proxy_8022.log`/`proxy_8022.err` 有最新记录
+- `bin\logs\proxy_8022.log`/`bin\logs\proxy_8022.err` 有最新记录
 - `go test ./... -v` 全部 PASS
+
+

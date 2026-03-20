@@ -17,9 +17,9 @@
 
 ## 脚本行为
 1. 结束当前占用 `8022` 端口的进程，确保旧实例不会残留。
-2. 将已有 `proxy_8022.log` / `proxy_8022.err` 轮转为带时间戳的归档文件，避免覆盖上一次调试现场。
+2. 将已有 `bin\logs\proxy_8022.log` / `bin\logs\proxy_8022.err` 轮转为带时间戳的归档文件，避免覆盖上一次调试现场。
 3. 在当前启动会话中设置 `PROXY_LOG_IO=1`，让 Go 代理输出入/出站 IO 日志。
-4. 以仓库根目录为工作目录启动 `bin/proxy.exe`，继续把 stdout/stderr 重定向到 `proxy_8022.log` / `proxy_8022.err`。
+4. 以仓库根目录为工作目录启动 `bin/proxy.exe`，继续把 stdout/stderr 重定向到 `bin\logs\proxy_8022.log` / `bin\logs\proxy_8022.err`。
 5. 启动后执行一次 `http://127.0.0.1:8022/health` 检查，若失败则在控制台输出明确错误。
 
 ## 风险与非目标
@@ -36,6 +36,8 @@
 
 ## 验证方式
 - 运行调试脚本后访问 `GET /health`，预期返回 `{"ok":true}`。
-- 检查 `proxy_8022.err` 中是否出现 `starting on :8022` 与 `IOLOG` 相关输出。
+- 检查 `bin\logs\proxy_8022.err` 中是否出现 `starting on :8022` 与 `IOLOG` 相关输出。
 - 使用外部客户端（如 Cherry Studio）发送带 `tools` 的请求，确认 `PROXY_LOG_IO=1` 下可观察到原始请求体和代理输出。
 - 完成实现后执行 `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./... -v`，确保脚本相关变更未影响 Go 代理测试基线。
+
+
