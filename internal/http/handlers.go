@@ -75,6 +75,7 @@ func (s *Server) releaseGlobalSlot() {
 func (s *Server) Handler() stdhttp.Handler {
 	mux := stdhttp.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/model", s.handleModels)
 	mux.HandleFunc("/v1/models", s.handleModels)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
