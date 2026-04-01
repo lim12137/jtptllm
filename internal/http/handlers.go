@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/lim12137/jtptllm/internal/gateway"
 	"github.com/lim12137/jtptllm/internal/openai"
@@ -505,8 +506,11 @@ func headerTruthy(r *stdhttp.Request, name string) bool {
 
 func splitModelList(raw string) []string {
 	return strings.FieldsFunc(raw, func(r rune) bool {
+		if unicode.IsSpace(r) {
+			return true
+		}
 		switch r {
-		case '*', ',', '\n', '\r', '\t', ' ':
+		case '*', ',', '，':
 			return true
 		default:
 			return false

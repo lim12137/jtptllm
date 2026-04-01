@@ -94,7 +94,7 @@ func TestModelEndpoints(t *testing.T) {
 		"data": map[string]any{
 			"message": map[string]any{
 				"content": []any{
-					map[string]any{"type": "text", "text": map[string]any{"value": "1*2*3"}},
+					map[string]any{"type": "text", "text": map[string]any{"value": "1*2,3，4\n5 6\t7"}},
 				},
 			},
 		},
@@ -125,7 +125,7 @@ func TestModelEndpoints(t *testing.T) {
 	if !ok {
 		t.Fatalf("/v1/models models missing")
 	}
-	if len(data) != 3 {
+	if len(data) != 7 {
 		t.Fatalf("/v1/models models len=%d", len(data))
 	}
 	ids := make([]string, 0, len(data))
@@ -140,7 +140,7 @@ func TestModelEndpoints(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	if strings.Join(ids, ",") != "1,2,3" {
+	if strings.Join(ids, ",") != "1,2,3,4,5,6,7" {
 		t.Fatalf("/v1/models ids=%v", ids)
 	}
 	if gw.lastRun.Text != "has-model?" {
