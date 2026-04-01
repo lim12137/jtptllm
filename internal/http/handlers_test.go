@@ -91,40 +91,40 @@ func TestHealth(t *testing.T) {
 func TestModelEndpoints(t *testing.T) {
 	srv := newTestServer(nil)
 
-	for _, path := range []string{"/model", "/v1/models"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s status=%d", path, rec.Code)
-		}
-		body := map[string]any{}
-		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-			t.Fatalf("%s decode: %v", path, err)
-		}
-		if body["object"] != "list" {
-			t.Fatalf("%s object=%v", path, body["object"])
-		}
-		data, ok := body["data"].([]any)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?model=1*2*3", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/v1/models status=%d", rec.Code)
+	}
+	body := map[string]any{}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("/v1/models decode: %v", err)
+	}
+	if body["object"] != "list" {
+		t.Fatalf("/v1/models object=%v", body["object"])
+	}
+	data, ok := body["data"].([]any)
+	if !ok {
+		t.Fatalf("/v1/models models missing")
+	}
+	if len(data) != 3 {
+		t.Fatalf("/v1/models models len=%d", len(data))
+	}
+	ids := make([]string, 0, len(data))
+	for _, item := range data {
+		m, ok := item.(map[string]any)
 		if !ok {
-			t.Fatalf("%s models missing", path)
+			t.Fatalf("/v1/models model item type=%T", item)
 		}
-		if len(data) != 3 {
-			t.Fatalf("%s models len=%d", path, len(data))
+		id, ok := m["id"].(string)
+		if !ok {
+			t.Fatalf("/v1/models model id missing: %v", m)
 		}
-		found := map[string]bool{}
-		for _, item := range data {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if id, ok := m["id"].(string); ok {
-				found[id] = true
-			}
-		}
-		if !found["fast"] || !found["deepseek"] || !found["qingyuan"] {
-			t.Fatalf("%s models=%v", path, found)
-		}
+		ids = append(ids, id)
+	}
+	if strings.Join(ids, ",") != "1,2,3" {
+		t.Fatalf("/v1/models ids=%v", ids)
 	}
 }
 

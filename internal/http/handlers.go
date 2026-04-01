@@ -75,7 +75,6 @@ func (s *Server) releaseGlobalSlot() {
 func (s *Server) Handler() stdhttp.Handler {
 	mux := stdhttp.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/model", s.handleModels)
 	mux.HandleFunc("/v1/models", s.handleModels)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
@@ -95,13 +94,24 @@ func (s *Server) handleModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
+	rawModels := strings.TrimSpace(r.URL.Query().Get("model"))
+	if rawModels == "" {
+		rawModels = s.defaultModel
+	}
+	items := make([]any, 0)
+	for _, part := range strings.Split(rawModels, "*") {
+		modelID := strings.TrimSpace(part)
+		if modelID == "" {
+			continue
+		}
+		items = append(items, map[string]any{"id": modelID, "object": "model"})
+	}
+	if len(items) == 0 {
+		items = append(items, map[string]any{"id": s.defaultModel, "object": "model"})
+	}
 	writeJSON(w, stdhttp.StatusOK, map[string]any{
 		"object": "list",
-		"data": []any{
-			map[string]any{"id": "fast", "object": "model"},
-			map[string]any{"id": "deepseek", "object": "model"},
-			map[string]any{"id": "qingyuan", "object": "model"},
-		},
+		"data":   items,
 	})
 }
 
