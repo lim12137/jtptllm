@@ -94,12 +94,35 @@ func (s *Server) handleModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
 		return
 	}
-	rawModels := strings.TrimSpace(r.URL.Query().Get("model"))
-	if rawModels == "" {
-		rawModels = s.defaultModel
+	sessionID, release, closeAfter, _, err := s.ensureSession(r.Context(), r)
+	if err != nil {
+		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
 	}
+	defer func() { release(closeAfter) }()
+
+	_, runResp, err := s.gateway.Run(r.Context(), gateway.RunRequest{
+		SessionID: sessionID,
+		Text:      "has-model?",
+		Stream:    false,
+		Delta:     false,
+	})
+	if err != nil {
+		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	rawModels := extractGatewayTextFromNonStream(runResp)
+	if rawModels == "" {
+		if msg, ok := gatewayRunError(runResp); ok {
+			writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
+			return
+		}
+		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "missing model list from upstream"})
+		return
+	}
+
 	items := make([]any, 0)
-	for _, part := range strings.Split(rawModels, "*") {
+	for _, part := range splitModelList(rawModels) {
 		modelID := strings.TrimSpace(part)
 		if modelID == "" {
 			continue
@@ -107,7 +130,8 @@ func (s *Server) handleModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		items = append(items, map[string]any{"id": modelID, "object": "model"})
 	}
 	if len(items) == 0 {
-		items = append(items, map[string]any{"id": s.defaultModel, "object": "model"})
+		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": "missing model list from upstream"})
+		return
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]any{
 		"object": "list",
@@ -477,6 +501,17 @@ func headerTruthy(r *stdhttp.Request, name string) bool {
 	default:
 		return false
 	}
+}
+
+func splitModelList(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		switch r {
+		case '*', ',', '\n', '\r', '\t', ' ':
+			return true
+		default:
+			return false
+		}
+	})
 }
 
 func sessionKey(r *stdhttp.Request) string {

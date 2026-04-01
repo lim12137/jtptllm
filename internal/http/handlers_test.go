@@ -89,10 +89,27 @@ func TestHealth(t *testing.T) {
 }
 
 func TestModelEndpoints(t *testing.T) {
-	srv := newTestServer(nil)
+	gw := &stubGateway{runResp: map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": map[string]any{"value": "1*2*3"}},
+				},
+			},
+		},
+	}}
+	srv := newTestServer(gw)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/models?model=1*2*3", nil)
+	req := httptest.NewRequest(http.MethodGet, "/model", nil)
 	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/model status=%d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/v1/models status=%d", rec.Code)
@@ -125,6 +142,9 @@ func TestModelEndpoints(t *testing.T) {
 	}
 	if strings.Join(ids, ",") != "1,2,3" {
 		t.Fatalf("/v1/models ids=%v", ids)
+	}
+	if gw.lastRun.Text != "has-model?" {
+		t.Fatalf("run text=%q", gw.lastRun.Text)
 	}
 }
 
