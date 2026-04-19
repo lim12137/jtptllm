@@ -261,8 +261,17 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	defer resp.Body.Close()
-	streamOutput, err := streamChatCompletion(w, resp.Body, parsed.Model)
+	streamOutput, err := collectStreamText(resp.Body)
 	if err != nil {
+		log.Printf("stream chat completions error: %v", err)
+		return
+	}
+	parsedTool := openai.ParseToolSentinel(streamOutput)
+	respPayload := openai.BuildChatCompletionResponse(streamOutput, parsed.Model)
+	if len(parsedTool.ToolCalls) > 0 {
+		respPayload = openai.BuildChatCompletionResponseFromText(streamOutput, parsed.Model)
+	}
+	if err := streamChatCompletionFromResponse(w, respPayload); err != nil {
 		log.Printf("stream chat completions error: %v", err)
 		return
 	}

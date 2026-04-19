@@ -1,9 +1,19 @@
 # Repository Guidelines
 
 ## 必读/流程
-- 所有任务必须使用子代理执行，主代理仅负责拆分、调度与汇总。子代理优先用gpt-5.2-codex high 模型。
+- 所有任务必须使用子代理执行。主代理只做分析、拆分、分配、调度、判断与汇总，不直接承担具体实现。
+- 具体实现、代码修改、测试执行、报告落盘、文档更新必须由子代理执行。
+- 简单任务使用 `gpt5.4-mini`。
+- 非简单任务优先使用 `gpt-5.3-codex`，默认使用 high reasoning。
+- 主代理必须先判断任务属于分析、规划、实现、调试、评审、QA 还是发布，再按任务意图优先路由对应的 ce 或 gstack 系列技能。
+- 分析、规划、方案、复盘类任务优先使用 ce 系列技能。
+- 调试、评审、QA、健康检查、设计审查、发布/ship 等流程优先使用 gstack 系列技能。
+- 如未使用对应技能，必须在回复中明确说明原因。
+- 不要着急，子代理启动后至少等待 10 分钟，再主动索要阶段性进展。
+- 若未到 10 分钟，除非出现明确失败、熔断、用户追问，或主任务被阻塞，否则不要中断子代理索要进度。
 - 子代理执行超过 30 分钟未产出结果时，必须回询进度与阻塞原因，必要时拆解细化任务。
 - 并发测试必须落盘为 `docs` 下的 `*.md` 报告，报告包含测试命令与结果摘要。
+
 ## Project Structure & Module Organization
 - `cmd/proxy/main.go`: application entrypoint, starts the HTTP proxy server.
 - `internal/config`: parses `api.txt` and runtime config.
@@ -24,8 +34,13 @@
   - `go test ./internal/http -v`
 - Smoke test tool-call flow (proxy must already run):
   - `powershell -File scripts/codex_toolcall_smoke.ps1`
-- If `go` is not on `PATH`, use the local toolchain:
-  - `C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe test ./... -v`
+- Go 本地工具链已安装到 D 盘，环境变量已写入用户级别：
+  - `GOROOT=D:\go`
+  - `GOPATH=D:\gopath`
+  - `PATH` 包含 `D:\go\bin`
+- 如果当前终端 `go` 不可用，手动加载：
+  - `export GOROOT=/d/go GOPATH=/d/gopath PATH="/d/go/bin:$PATH"`
+  - 或在 PowerShell 中：`$env:GOROOT='D:\go'; $env:GOPATH='D:\gopath'; $env:Path='D:\go\bin;' + $env:Path`
 
 ## Coding Style & Naming Conventions
 - Language: Go 1.22. Keep code `gofmt`-clean before commit.

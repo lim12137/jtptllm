@@ -2,6 +2,8 @@ package openai
 
 import (
 	"encoding/json"
+	"encoding/xml"
+	"io"
 	"math/rand"
 	"regexp"
 	"strings"
@@ -9,7 +11,17 @@ import (
 	"unicode/utf8"
 )
 
-var modelMarkerRe = regexp.MustCompile(`\*\*model\s*=\s*[^*]+\*\*`)
+var (
+	modelMarkerRe         = regexp.MustCompile(`\*\*model\s*=\s*[^*]+\*\*`)
+	thinkingBlockRe       = regexp.MustCompile(`(?is)<thinking\b[^>]*>.*?</thinking>`)
+	thinkingSelfClosingRe = regexp.MustCompile(`(?is)<thinking\b[^>]*/>`)
+	toolCallTagBlockRe    = regexp.MustCompile(`(?is)<tool_call\b[^>]*>.*?</tool_call>`)
+	tcSentinelBlockRe     = regexp.MustCompile(`(?is)<<<TC>>>.*?<<<END>>>`)
+	taggedToolNameRe      = regexp.MustCompile(`(?is)<tool_call\b[^>]*>\s*<([A-Za-z0-9_.:-]+)\b`)
+	jsonToolNRe           = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
+	jsonToolNameRe        = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
+	jsonToolKeyRe         = regexp.MustCompile(`(?is)"tool(?:Name)?"\s*:\s*"([^"]+)"`)
+)
 
 const DefaultModel = "qingyuan"
 
@@ -249,8 +261,8 @@ func PromptFromResponses(payload map[string]any) string {
 		for _, item := range v {
 			switch iv := item.(type) {
 			case string:
-				if strings.TrimSpace(iv) != "" {
-					lines = append(lines, "user: "+iv)
+				if line := messageToPromptLine("user", iv); line != "" {
+					lines = append(lines, line)
 				}
 			case map[string]any:
 				role, _ := iv["role"].(string)
@@ -259,11 +271,8 @@ func PromptFromResponses(payload map[string]any) string {
 					contentSrc = c
 				}
 				content := coerceContentToStr(contentSrc)
-				if strings.TrimSpace(content) != "" {
-					if strings.TrimSpace(role) == "" {
-						role = "user"
-					}
-					lines = append(lines, strings.TrimSpace(role)+": "+content)
+				if line := messageToPromptLine(role, content); line != "" {
+					lines = append(lines, line)
 				}
 			}
 		}
@@ -752,17 +761,164 @@ func withInstructions(instructions string, prompt string) string {
 func chatMessagesToPrompt(messages []Message) string {
 	var lines []string
 	for _, m := range messages {
-		role := strings.TrimSpace(m.Role)
-		if role == "" {
-			role = "user"
+		if line := messageToPromptLine(m.Role, coerceContentToStr(m.Content)); line != "" {
+			lines = append(lines, line)
 		}
-		content := strings.TrimSpace(coerceContentToStr(m.Content))
-		if content == "" {
-			continue
-		}
-		lines = append(lines, role+": "+content)
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func messageToPromptLine(role string, content string) string {
+	normalizedRole := strings.TrimSpace(role)
+	if normalizedRole == "" {
+		normalizedRole = "user"
+	}
+	normalizedContent := strings.TrimSpace(normalizeMessageContentForPrompt(normalizedRole, content))
+	if normalizedContent == "" {
+		return ""
+	}
+	return normalizedRole + ": " + normalizedContent
+}
+
+func normalizeMessageContentForPrompt(role string, content string) string {
+	if !strings.EqualFold(strings.TrimSpace(role), "assistant") {
+		return content
+	}
+	return normalizeAssistantHistoryContent(content)
+}
+
+func normalizeAssistantHistoryContent(content string) string {
+	current := strings.TrimSpace(stripThinkingContent(content))
+	if current == "" {
+		return ""
+	}
+
+	toolCalls := make([]ToolCall, 0, 2)
+	for i := 0; i < 8; i++ {
+		parsed := ParseToolSentinel(current)
+		if len(parsed.ToolCalls) == 0 {
+			break
+		}
+		toolCalls = append(toolCalls, parsed.ToolCalls...)
+		nextSource := parsed.Content
+		if parsed.HasSentinel {
+			// If sentinel is embedded in free-form text, keep the surrounding text.
+			outside := strings.TrimSpace(tcSentinelBlockRe.ReplaceAllString(current, " "))
+			if outside != "" {
+				nextSource = outside
+			}
+		}
+		next := strings.TrimSpace(stripThinkingContent(nextSource))
+		if next == current {
+			current = next
+			break
+		}
+		current = next
+		if current == "" {
+			break
+		}
+	}
+
+	var rawNames []string
+	var foundRaw bool
+	current, rawNames, foundRaw = stripRawToolCallArtifacts(current)
+	if foundRaw {
+		for _, name := range rawNames {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			toolCalls = append(toolCalls, ToolCall{Name: name})
+		}
+	}
+
+	current = strings.TrimSpace(current)
+	if current != "" {
+		return current
+	}
+	return summarizeAssistantToolCalls(toolCalls)
+}
+
+func stripThinkingContent(content string) string {
+	out := thinkingBlockRe.ReplaceAllString(content, " ")
+	out = thinkingSelfClosingRe.ReplaceAllString(out, " ")
+	return out
+}
+
+func stripRawToolCallArtifacts(content string) (string, []string, bool) {
+	var names []string
+	found := false
+	replaceFn := func(block string) string {
+		found = true
+		if name := inferToolNameFromArtifact(block); name != "" {
+			names = append(names, name)
+		}
+		return " "
+	}
+	out := toolCallTagBlockRe.ReplaceAllStringFunc(content, replaceFn)
+	out = tcSentinelBlockRe.ReplaceAllStringFunc(out, replaceFn)
+	if !found {
+		return content, nil, false
+	}
+	return strings.TrimSpace(out), uniqueNonEmptyNames(names), true
+}
+
+func inferToolNameFromArtifact(block string) string {
+	parsed := ParseToolSentinel(strings.TrimSpace(block))
+	for _, call := range parsed.ToolCalls {
+		if name := strings.TrimSpace(call.Name); name != "" {
+			return name
+		}
+	}
+	if m := taggedToolNameRe.FindStringSubmatch(block); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	if m := jsonToolNRe.FindStringSubmatch(block); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	if m := jsonToolNameRe.FindStringSubmatch(block); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	if m := jsonToolKeyRe.FindStringSubmatch(block); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+func summarizeAssistantToolCalls(calls []ToolCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if name := strings.TrimSpace(call.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	names = uniqueNonEmptyNames(names)
+	if len(names) == 0 {
+		return "assistant_tool_call: unknown"
+	}
+	return "assistant_tool_call: " + names[0]
+}
+
+func uniqueNonEmptyNames(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
 }
 
 func coerceContentToStr(content any) string {
@@ -945,32 +1101,8 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	innerStart := start + len(openTag)
 	innerEnd := innerStart + end
 	inner := strings.TrimSpace(trimmed[innerStart:innerEnd])
-	if !strings.HasPrefix(inner, "<") {
-		return ToolParseResult{Content: trimmed}
-	}
-	nameEnd := strings.Index(inner, ">")
-	if nameEnd <= 1 {
-		return ToolParseResult{Content: trimmed}
-	}
-	name := strings.TrimSpace(inner[1:nameEnd])
-	if name == "" || strings.ContainsAny(name, " \t\r\n/") {
-		return ToolParseResult{Content: trimmed}
-	}
-	closeInnerTag := "</" + name + ">"
-	closeInnerIdx := strings.LastIndex(inner, closeInnerTag)
-	if closeInnerIdx < 0 {
-		return ToolParseResult{Content: trimmed}
-	}
-	argText := strings.TrimSpace(inner[nameEnd+1 : closeInnerIdx])
-	if argText == "" {
-		return ToolParseResult{Content: trimmed}
-	}
-	var payload any
-	if err := json.Unmarshal([]byte(argText), &payload); err != nil {
-		return ToolParseResult{Content: trimmed}
-	}
-	argBytes, err := json.Marshal(payload)
-	if err != nil {
+	name, argBytes, ok := parseTaggedToolCall(inner)
+	if !ok {
 		return ToolParseResult{Content: trimmed}
 	}
 	left := trimmed[:start]
@@ -989,6 +1121,188 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 		}},
 		Content: content,
 	}
+}
+
+func parseTaggedToolCall(inner string) (string, []byte, bool) {
+	trimmed := strings.TrimSpace(inner)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "<") {
+		return "", nil, false
+	}
+
+	if strings.HasSuffix(trimmed, "/>") {
+		name, argBytes, ok := parseSelfClosingTaggedToolCall(trimmed)
+		if ok {
+			return name, argBytes, true
+		}
+	}
+
+	nameEnd := strings.Index(trimmed, ">")
+	if nameEnd <= 1 {
+		return "", nil, false
+	}
+	name := strings.TrimSpace(trimmed[1:nameEnd])
+	if name == "" || strings.ContainsAny(name, " \t\r\n/") {
+		return "", nil, false
+	}
+	closeInnerTag := "</" + name + ">"
+	closeInnerIdx := strings.LastIndex(trimmed, closeInnerTag)
+	if closeInnerIdx < 0 {
+		return "", nil, false
+	}
+	argText := strings.TrimSpace(trimmed[nameEnd+1 : closeInnerIdx])
+	if argText == "" {
+		return "", nil, false
+	}
+	argBytes, ok := parseTaggedToolArguments(argText)
+	if !ok {
+		return "", nil, false
+	}
+	return name, argBytes, true
+}
+
+func parseSelfClosingTaggedToolCall(inner string) (string, []byte, bool) {
+	decoder := xml.NewDecoder(strings.NewReader(inner))
+	token, err := decoder.Token()
+	if err != nil {
+		return "", nil, false
+	}
+
+	start, ok := token.(xml.StartElement)
+	if !ok {
+		return "", nil, false
+	}
+	name := strings.TrimSpace(start.Name.Local)
+	if name == "" {
+		return "", nil, false
+	}
+
+	args := map[string]any{}
+	for _, attr := range start.Attr {
+		key := strings.TrimSpace(attr.Name.Local)
+		if key == "" {
+			continue
+		}
+		mergeXMLToolArg(args, key, attr.Value)
+	}
+
+	seenEnd := false
+	for {
+		token, err = decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", nil, false
+		}
+		switch tok := token.(type) {
+		case xml.EndElement:
+			if strings.TrimSpace(tok.Name.Local) != name {
+				return "", nil, false
+			}
+			seenEnd = true
+		case xml.CharData:
+			if strings.TrimSpace(string(tok)) != "" {
+				return "", nil, false
+			}
+		case xml.StartElement:
+			return "", nil, false
+		}
+	}
+
+	if !seenEnd {
+		return "", nil, false
+	}
+	if len(args) == 0 {
+		return name, []byte("{}"), true
+	}
+
+	argBytes, err := json.Marshal(args)
+	if err != nil {
+		return "", nil, false
+	}
+	return name, argBytes, true
+}
+
+func parseTaggedToolArguments(argText string) ([]byte, bool) {
+	trimmed := strings.TrimSpace(argText)
+	if trimmed == "" {
+		return nil, false
+	}
+
+	var payload any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+		b, err := json.Marshal(payload)
+		if err == nil {
+			return b, true
+		}
+	}
+
+	return parseXMLToolArguments(trimmed)
+}
+
+type xmlToolArgNode struct {
+	XMLName  xml.Name
+	Content  string           `xml:",chardata"`
+	Children []xmlToolArgNode `xml:",any"`
+}
+
+func parseXMLToolArguments(argText string) ([]byte, bool) {
+	wrapped := "<tool_args>" + argText + "</tool_args>"
+	var root xmlToolArgNode
+	if err := xml.Unmarshal([]byte(wrapped), &root); err != nil {
+		return nil, false
+	}
+	if len(root.Children) == 0 {
+		return nil, false
+	}
+
+	args := map[string]any{}
+	for _, child := range root.Children {
+		key := strings.TrimSpace(child.XMLName.Local)
+		if key == "" {
+			continue
+		}
+		mergeXMLToolArg(args, key, xmlToolArgNodeValue(child))
+	}
+	if len(args) == 0 {
+		return nil, false
+	}
+
+	b, err := json.Marshal(args)
+	if err != nil {
+		return nil, false
+	}
+	return b, true
+}
+
+func xmlToolArgNodeValue(node xmlToolArgNode) any {
+	if len(node.Children) == 0 {
+		return strings.TrimSpace(node.Content)
+	}
+	obj := map[string]any{}
+	for _, child := range node.Children {
+		key := strings.TrimSpace(child.XMLName.Local)
+		if key == "" {
+			continue
+		}
+		mergeXMLToolArg(obj, key, xmlToolArgNodeValue(child))
+	}
+	if len(obj) == 0 {
+		return strings.TrimSpace(node.Content)
+	}
+	return obj
+}
+
+func mergeXMLToolArg(dst map[string]any, key string, value any) {
+	if existing, ok := dst[key]; ok {
+		if arr, ok := existing.([]any); ok {
+			dst[key] = append(arr, value)
+			return
+		}
+		dst[key] = []any{existing, value}
+		return
+	}
+	dst[key] = value
 }
 
 func extractFirstJSONBlock(text string) (string, string, bool) {

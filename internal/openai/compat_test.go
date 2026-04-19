@@ -13,6 +13,145 @@ func TestChatToPrompt(t *testing.T) {
 	}
 }
 
+func TestPromptFromChatAssistantToolCallOnlySummarized(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "assistant", Content: `<tool_call><Read>{"file_path":"go.mod"}</Read></tool_call>`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "assistant: assistant_tool_call: Read"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatAssistantMixedNaturalLanguageAndToolCall(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "assistant", Content: `我先查一下 <tool_call><Read>{"file_path":"go.mod"}</Read></tool_call> 稍等`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "assistant: 我先查一下 稍等"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatAssistantThinkingRemoved(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", Content: `<thinking>internal tool plan</thinking>可见回答`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "user: hi\nassistant: 可见回答"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatUserToolCallLikeTextUnchanged(t *testing.T) {
+	userText := `<tool_call><Read>{"file_path":"go.mod"}</Read></tool_call>`
+	in := ChatRequest{Messages: []Message{{Role: "user", Content: userText}}}
+	got := PromptFromChat(in)
+	want := "user: " + userText
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromResponsesMessagesPathSanitizesAssistantHistory(t *testing.T) {
+	payload := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "assistant", "content": `<tool_call><Read>{"file_path":"go.mod"}</Read></tool_call>`},
+		},
+	}
+	got := PromptFromResponses(payload)
+	want := "assistant: assistant_tool_call: Read"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromResponsesInputArraySanitizesAssistantOnly(t *testing.T) {
+	payload := map[string]any{
+		"input": []any{
+			map[string]any{
+				"role":    "assistant",
+				"content": `先查下 <tool_call><Read>{"file_path":"go.mod"}</Read></tool_call>`,
+			},
+			map[string]any{
+				"role":    "user",
+				"content": `<tool_call><Read>{"file_path":"go.mod"}</Read></tool_call>`,
+			},
+		},
+	}
+	got := PromptFromResponses(payload)
+	want := "assistant: 先查下\nuser: <tool_call><Read>{\"file_path\":\"go.mod\"}</Read></tool_call>"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatAssistantSentinelOnlySummarized(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "assistant", Content: `<<<TC>>>{"tc":[{"id":"call_1","n":"multi_tool_use.parallel","a":{"tool_uses":[{"recipient_name":"functions.shell_command","parameters":{"command":"Get-Date"}}]}}],"c":""}<<<END>>>`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "assistant: assistant_tool_call: multi_tool_use.parallel"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatAssistantMixedNaturalLanguageAndSentinel(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "assistant", Content: `checking <<<TC>>>{"tc":[{"n":"Read","a":{"file_path":"go.mod"}}],"c":""}<<<END>>> done`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "assistant: checking   done"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatRepairBranchOutputBackfillSanitized(t *testing.T) {
+	repairedOutput := `<tool_call><Read>{"file_path":"go.mod"}</Read></tool_call>`
+	parsed := ParseToolSentinel(repairedOutput)
+	if len(parsed.ToolCalls) != 1 || parsed.ToolCalls[0].Name != "Read" {
+		t.Fatalf("repair parse mismatch: %+v", parsed)
+	}
+
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "step1"},
+			{Role: "assistant", Content: repairedOutput},
+			{Role: "user", Content: "step2"},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "user: step1\nassistant: assistant_tool_call: Read\nuser: step2"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestNormalizeAssistantHistoryContentIdempotent(t *testing.T) {
+	src := `checking <tool_call><Read>{"file_path":"go.mod"}</Read></tool_call> done`
+	once := normalizeAssistantHistoryContent(src)
+	twice := normalizeAssistantHistoryContent(once)
+	if once != twice {
+		t.Fatalf("once=%q twice=%q", once, twice)
+	}
+}
+
 func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
 	usage := ChatUsageFromCharCount("hi", "回应")
 	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {
@@ -469,6 +608,102 @@ func TestParseToolSentinelTagWrappedToolCall(t *testing.T) {
 		t.Fatalf("arguments=%q", res.ToolCalls[0].Arguments)
 	}
 	if res.Content != "" {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
+func TestParseToolSentinelTagWrappedToolCallJSONArgs(t *testing.T) {
+	text := "<tool_call><Read>{\"file_path\":\"go.mod\"}</Read></tool_call>"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Read" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args["file_path"] != "go.mod" {
+		t.Fatalf("args=%v", args)
+	}
+}
+
+func TestParseToolSentinelTagWrappedToolCallXMLArgs(t *testing.T) {
+	text := "<tool_call>\n<Read>\n<file_path>go.mod</file_path>\n</Read>\n</tool_call>"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Read" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args["file_path"] != "go.mod" {
+		t.Fatalf("args=%v", args)
+	}
+}
+
+func TestParseToolSentinelTagWrappedToolCallCompatibility(t *testing.T) {
+	t.Run("self-closing attributes", func(t *testing.T) {
+		text := `<tool_call><Glob pattern="*" path="d:/1work/api调用" /></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Glob" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["pattern"] != "*" || args["path"] != "d:/1work/api调用" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("paired xml no regression", func(t *testing.T) {
+		text := "<tool_call><Read><file_path>go.mod</file_path></Read></tool_call>"
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["file_path"] != "go.mod" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("plain text no false positive", func(t *testing.T) {
+		text := `normal reply: <Glob pattern="*" path="d:/1work/api调用" />`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 0 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.Content != text {
+			t.Fatalf("content=%q", res.Content)
+		}
+	})
+}
+
+func TestParseToolSentinelPlainTextDoesNotMisclassifyAsToolCall(t *testing.T) {
+	text := "normal assistant reply with <tool_call> marker words only"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 0 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != strings.TrimSpace(text) {
 		t.Fatalf("content=%q", res.Content)
 	}
 }
