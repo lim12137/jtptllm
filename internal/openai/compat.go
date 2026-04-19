@@ -16,7 +16,7 @@ var (
 	thinkingBlockRe       = regexp.MustCompile(`(?is)<thinking\b[^>]*>.*?</thinking>`)
 	thinkingSelfClosingRe = regexp.MustCompile(`(?is)<thinking\b[^>]*/>`)
 	toolCallTagBlockRe    = regexp.MustCompile(`(?is)<tool_call\b[^>]*>.*?</tool_call>`)
-	tcSentinelBlockRe     = regexp.MustCompile(`(?is)<<<TC>>>.*?<<<END>>>`)
+	tcSentinelBlockRe     = regexp.MustCompile(`(?is)(?:<<<TC>>>|<<TC>>).*?(?:<<<END>>>|<<END>>)`)
 	taggedToolNameRe      = regexp.MustCompile(`(?is)<tool_call\b[^>]*>\s*<([A-Za-z0-9_.:-]+)\b`)
 	jsonToolNRe           = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
 	jsonToolNameRe        = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
@@ -996,9 +996,8 @@ func boolOr(v any, def bool) bool {
 }
 
 func ParseToolSentinel(text string) ToolParseResult {
-	start := strings.Index(text, "<<<TC>>>")
-	end := strings.Index(text, "<<<END>>>")
-	if start < 0 || end < 0 || end <= start+len("<<<TC>>>") {
+	_, _, raw, ok := extractSentinelPayload(text)
+	if !ok {
 		res := parseToolCallJSONBlock(text)
 		if len(res.ToolCalls) > 0 {
 			return res
@@ -1009,7 +1008,6 @@ func ParseToolSentinel(text string) ToolParseResult {
 		}
 		return parseToolCallRawJSON(text)
 	}
-	raw := text[start+len("<<<TC>>>") : end]
 	var payload struct {
 		TC []map[string]any `json:"tc"`
 		C  any              `json:"c"`
@@ -1049,6 +1047,34 @@ func ParseToolSentinel(text string) ToolParseResult {
 		calls = append(calls, ToolCall{ID: id, Name: name, Arguments: argStr})
 	}
 	return ToolParseResult{ToolCalls: calls, Content: strings.TrimSpace(content), HasSentinel: true}
+}
+
+func extractSentinelPayload(text string) (int, int, string, bool) {
+	type marker struct {
+		open  string
+		close string
+	}
+	markers := []marker{
+		{open: "<<<TC>>>", close: "<<<END>>>"},
+		{open: "<<TC>>", close: "<<END>>"},
+	}
+	for _, m := range markers {
+		start := strings.Index(text, m.open)
+		if start < 0 {
+			continue
+		}
+		payloadStart := start + len(m.open)
+		endOffset := strings.Index(text[payloadStart:], m.close)
+		if endOffset < 0 {
+			continue
+		}
+		payloadEnd := payloadStart + endOffset
+		if payloadEnd <= payloadStart {
+			continue
+		}
+		return start, payloadEnd, text[payloadStart:payloadEnd], true
+	}
+	return -1, -1, "", false
 }
 
 func parseToolCallJSONBlock(text string) ToolParseResult {
@@ -1583,15 +1609,15 @@ func buildToolSystemPrefix(tools []map[string]any, choice string) string {
 	if trimmedChoice != "" {
 		payload["tool_choice"] = choice
 	}
-	payload["tc_protocol"] = "<<<TC>>>{\"tc\":[{\"id\":\"call_1\",\"n\":\"tool_name\",\"a\":{}}],\"c\":\"\"}<<<END>>>"
+	payload["tc_protocol"] = "<tool_call><tool_name>{\"arg\":\"value\"}</tool_name></tool_call>"
 	switch {
 	case trimmedChoice == "", strings.EqualFold(trimmedChoice, "auto"):
-		payload["tc_instruction"] = "如需调用工具，使用 tc_protocol 格式输出；若无需调用工具，直接输出自然语言。"
+		payload["tc_instruction"] = "When a tool is needed, output exactly one tool call using tc_protocol. Otherwise respond with normal natural language."
 	case strings.EqualFold(trimmedChoice, "none"):
-		payload["tc_instruction"] = "不要调用工具；直接输出自然语言。"
+		payload["tc_instruction"] = "Do not call tools. Respond with natural language only."
 		payload["tc_forbid"] = true
 	default:
-		payload["tc_instruction"] = "必须使用 tc_protocol 格式输出工具调用；不要输出自然语言；c 可为空。"
+		payload["tc_instruction"] = "You must respond with exactly one tool call using tc_protocol and no natural-language text."
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

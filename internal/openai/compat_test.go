@@ -109,10 +109,36 @@ func TestPromptFromChatAssistantSentinelOnlySummarized(t *testing.T) {
 	}
 }
 
+func TestPromptFromChatAssistantDoubleAngleSentinelOnlySummarized(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "assistant", Content: `<<TC>>{"tc":[{"id":"call_1","n":"multi_tool_use.parallel","a":{"tool_uses":[{"recipient_name":"functions.shell_command","parameters":{"command":"Get-Date"}}]}}],"c":""}<<END>>`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "assistant: assistant_tool_call: multi_tool_use.parallel"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
 func TestPromptFromChatAssistantMixedNaturalLanguageAndSentinel(t *testing.T) {
 	in := ChatRequest{
 		Messages: []Message{
 			{Role: "assistant", Content: `checking <<<TC>>>{"tc":[{"n":"Read","a":{"file_path":"go.mod"}}],"c":""}<<<END>>> done`},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "assistant: checking   done"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
+func TestPromptFromChatAssistantMixedNaturalLanguageAndDoubleAngleSentinel(t *testing.T) {
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "assistant", Content: `checking <<TC>>{"tc":[{"n":"Read","a":{"file_path":"go.mod"}}],"c":""}<<END>> done`},
 		},
 	}
 	got := PromptFromChat(in)
@@ -246,6 +272,9 @@ func TestToolSystemPrefixIncludesProtocol(t *testing.T) {
 	if !strings.Contains(parsed.Prompt, "tc_instruction") {
 		t.Fatalf("missing tc_instruction")
 	}
+	if !strings.Contains(parsed.Prompt, "tc_protocol") || !strings.Contains(parsed.Prompt, "tool_name") {
+		t.Fatalf("expected xml tc_protocol: %q", parsed.Prompt)
+	}
 	if !strings.Contains(parsed.Prompt, "tc_forbid") {
 		t.Fatalf("missing tc_forbid")
 	}
@@ -307,7 +336,7 @@ func TestLegacyFunctionCallNamedChoiceForcesSpecificTool(t *testing.T) {
 	if !strings.Contains(parsed.Prompt, "get_weather") {
 		t.Fatalf("missing named tool choice")
 	}
-	if !strings.Contains(parsed.Prompt, "必须使用 tc_protocol") {
+	if !strings.Contains(parsed.Prompt, "exactly one tool call using tc_protocol") {
 		t.Fatalf("named function_call should force protocol output: %q", parsed.Prompt)
 	}
 }
@@ -437,6 +466,27 @@ func TestParseToolSentinelToChatResponse(t *testing.T) {
 
 func TestParseToolSentinelExtractsContentAndArgs(t *testing.T) {
 	text := "<<<TC>>>{\"tc\":[{\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\",\"unit\":\"c\"}}],\"c\":\"ok\"}<<<END>>>"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.Content != "ok" {
+		t.Fatalf("content=%q", res.Content)
+	}
+	if !strings.HasPrefix(res.ToolCalls[0].ID, "call_") {
+		t.Fatalf("missing generated id")
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args["location"] != "Paris" || args["unit"] != "c" {
+		t.Fatalf("args=%v", args)
+	}
+}
+
+func TestParseToolSentinelDoubleAngleExtractsContentAndArgs(t *testing.T) {
+	text := "<<TC>>{\"tc\":[{\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\",\"unit\":\"c\"}}],\"c\":\"ok\"}<<END>>"
 	res := ParseToolSentinel(text)
 	if len(res.ToolCalls) != 1 {
 		t.Fatalf("toolcalls=%d", len(res.ToolCalls))

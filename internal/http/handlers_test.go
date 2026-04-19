@@ -362,6 +362,84 @@ func TestChatCompletionToolSentinelMapping(t *testing.T) {
 	}
 }
 
+func TestChatCompletionDoubleAngleToolSentinelMapping(t *testing.T) {
+	gw := &stubGateway{runResp: map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{
+				"text": "<<TC>>{\"tc\":[{\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\"}}],\"c\":\"\"}<<END>>",
+			},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	choices, ok := out["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("choices empty")
+	}
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	if msg["tool_calls"] == nil {
+		t.Fatalf("missing tool_calls")
+	}
+}
+
+func TestChatCompletionsToolPromptUsesXMLProtocol(t *testing.T) {
+	gw := &stubGateway{runResp: map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": map[string]any{"value": "ok"}},
+				},
+			},
+		},
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"tools": []any{map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":       "get_weather",
+				"parameters": map[string]any{"type": "object"},
+			},
+		}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if !strings.Contains(gw.lastRun.Text, "tc_protocol") || !strings.Contains(gw.lastRun.Text, "tool_name") {
+		t.Fatalf("prompt missing xml tc_protocol: %q", gw.lastRun.Text)
+	}
+	if strings.Contains(gw.lastRun.Text, "<<<TC>>>") {
+		t.Fatalf("prompt still contains legacy sentinel protocol: %q", gw.lastRun.Text)
+	}
+}
+
 func TestResponsesNonStream(t *testing.T) {
 	gw := &stubGateway{runResp: map[string]any{
 		"success": true,
