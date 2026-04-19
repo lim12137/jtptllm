@@ -1,0 +1,7 @@
+﻿data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"location\":\"Paris\",\"unit\":\"c\"}","name":"get_weather"},"id":"call_v4sb5quvveen","index":0,"type":"function"}]},"finish_reason":null,"index":0}],"created":1776615178,"id":"chatcmpl_hdmcp1iz3gwv","model":"agent","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"created":1776615178,"id":"chatcmpl_hdmcp1iz3gwv","model":"agent","object":"chat.completion.chunk"}
+
+data: [DONE]
+
+

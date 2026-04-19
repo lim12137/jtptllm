@@ -1,0 +1,9 @@
+﻿data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null,"index":0}],"created":1776615122,"id":"chatcmpl_lsqkxrhs6of1","model":"agent","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":"\u003c\u003cTC\u003e\u003e{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\",\"unit\":\"c\"}}],\"c\":\"\"}\u003c\u003cEND\u003e\u003e"},"finish_reason":null,"index":0}],"created":1776615122,"id":"chatcmpl_lsqkxrhs6of1","model":"agent","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"created":1776615122,"id":"chatcmpl_lsqkxrhs6of1","model":"agent","object":"chat.completion.chunk"}
+
+data: [DONE]
+
+

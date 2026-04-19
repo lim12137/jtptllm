@@ -1,0 +1,198 @@
+﻿{
+    "generated_at":  "2026-04-20T00:13:16",
+    "base_url":  "http://127.0.0.1:8022",
+    "model":  "agent",
+    "endpoint":  "/v1/chat/completions",
+    "runs_per_cell":  3,
+    "restart_proxy":  true,
+    "proxy_stderr_path":  "D:\\1work\\api调用\\proxy_8022.err",
+    "report_path":  "D:\\1work\\api调用\\docs\\reports\\2026-04-20-protocol-adherence-experiment-001016.md",
+    "run_dir":  "D:\\1work\\api调用\\docs\\reports\\protocol-adherence\\raw\\2026-04-20_001016",
+    "protocols":  [
+                      {
+                          "id":  "triple",
+                          "label":  "\u003c\u003c\u003cTC\u003e\u003e\u003e...\u003c\u003c\u003cEND\u003e\u003e\u003e",
+                          "complete_pattern":  "(?s)\u003c\u003c\u003cTC\u003e\u003e\u003e.*?\u003c\u003c\u003cEND\u003e\u003e\u003e",
+                          "open_pattern":  "\u003c\u003c\u003cTC\u003e\u003e\u003e",
+                          "close_pattern":  "\u003c\u003c\u003cEND\u003e\u003e\u003e",
+                          "template":  "\u003c\u003c\u003cTC\u003e\u003e\u003e{\"tc\":[{\"id\":\"call_1\",\"n\":\"get_weather\",\"a\":{\"location\":\"Paris\",\"unit\":\"c\"}}],\"c\":\"\"}\u003c\u003c\u003cEND\u003e\u003e\u003e"
+                      },
+                      {
+                          "id":  "double",
+                          "label":  "\u003c\u003cTC\u003e\u003e...\u003c\u003cEND\u003e\u003e",
+                          "complete_pattern":  "(?s)(?\u003c!\u003c)\u003c\u003cTC\u003e\u003e(?!\u003e).*?(?\u003c!\u003c)\u003c\u003cEND\u003e\u003e(?!\u003e)",
+                          "open_pattern":  "(?\u003c!\u003c)\u003c\u003cTC\u003e\u003e(?!\u003e)",
+                          "close_pattern":  "(?\u003c!\u003c)\u003c\u003cEND\u003e\u003e(?!\u003e)",
+                          "template":  "\u003c\u003cTC\u003e\u003e{\"name\":\"get_weather\",\"arguments\":{\"location\":\"Paris\",\"unit\":\"c\"}}\u003c\u003cEND\u003e\u003e"
+                      },
+                      {
+                          "id":  "xml",
+                          "label":  "\u003ctool_call\u003e...\u003c/tool_call\u003e",
+                          "complete_pattern":  "(?is)\u003ctool_call\\b[^\u003e]*\u003e.*?\u003c/tool_call\u003e",
+                          "open_pattern":  "(?is)\u003ctool_call\\b[^\u003e]*\u003e",
+                          "close_pattern":  "(?is)\u003c/tool_call\u003e",
+                          "template":  "\u003ctool_call\u003e\u003cget_weather\u003e{\"location\":\"Paris\",\"unit\":\"c\"}\u003c/get_weather\u003e\u003c/tool_call\u003e"
+                      }
+                  ],
+    "context_tiers":  [
+                          {
+                              "id":  "short",
+                              "target_chars":  3000
+                          },
+                          {
+                              "id":  "ctx80k",
+                              "target_chars":  80000
+                          },
+                          {
+                              "id":  "ctx120k",
+                              "target_chars":  120000
+                          }
+                      ],
+    "total_runs":  27,
+    "matrix":  [
+                   {
+                       "protocol_id":  "triple",
+                       "protocol_label":  "\u003c\u003c\u003cTC\u003e\u003e\u003e...\u003c\u003c\u003cEND\u003e\u003e\u003e",
+                       "context_tier":  "short",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "triple",
+                       "protocol_label":  "\u003c\u003c\u003cTC\u003e\u003e\u003e...\u003c\u003c\u003cEND\u003e\u003e\u003e",
+                       "context_tier":  "ctx80k",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "triple",
+                       "protocol_label":  "\u003c\u003c\u003cTC\u003e\u003e\u003e...\u003c\u003c\u003cEND\u003e\u003e\u003e",
+                       "context_tier":  "ctx120k",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "double",
+                       "protocol_label":  "\u003c\u003cTC\u003e\u003e...\u003c\u003cEND\u003e\u003e",
+                       "context_tier":  "short",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "double",
+                       "protocol_label":  "\u003c\u003cTC\u003e\u003e...\u003c\u003cEND\u003e\u003e",
+                       "context_tier":  "ctx80k",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "double",
+                       "protocol_label":  "\u003c\u003cTC\u003e\u003e...\u003c\u003cEND\u003e\u003e",
+                       "context_tier":  "ctx120k",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "xml",
+                       "protocol_label":  "\u003ctool_call\u003e...\u003c/tool_call\u003e",
+                       "context_tier":  "short",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "xml",
+                       "protocol_label":  "\u003ctool_call\u003e...\u003c/tool_call\u003e",
+                       "context_tier":  "ctx80k",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   },
+                   {
+                       "protocol_id":  "xml",
+                       "protocol_label":  "\u003ctool_call\u003e...\u003c/tool_call\u003e",
+                       "context_tier":  "ctx120k",
+                       "samples":  3,
+                       "adherence_count":  0,
+                       "adherence_rate":  0,
+                       "wrong_protocol_count":  0,
+                       "wrong_protocol_rate":  0,
+                       "natural_language_contamination_count":  0,
+                       "natural_language_contamination_rate":  0,
+                       "truncation_incomplete_count":  0,
+                       "truncation_incomplete_rate":  0,
+                       "no_protocol_count":  3,
+                       "no_protocol_rate":  1
+                   }
+               ]
+}
