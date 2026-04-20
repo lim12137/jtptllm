@@ -223,6 +223,32 @@ func TestNormalizeAssistantHistoryContentUnclosedToolCallTagStrippedInNormalMode
 	}
 }
 
+func TestPromptFromChatNormalizesCodebuddyAgentArtifactToToolSummary(t *testing.T) {
+	t.Setenv("PROXY_LOG_IO", "")
+	assistant := `I'll analyze the codebase and create a CODEBUDDY.md file. Let me start by exploring the repository structure to understand what's already available.
+
+<tool_call>
+<Agent
+{
+  "description": "Explore repository structure",
+  "prompt": "I need to analyze this codebase to understand its structure, architecture, and development workflow. Please explore...",
+  "subagent_type": "Explore"
+}
+</Agent>
+</tool_call>`
+	in := ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "do it"},
+			{Role: "assistant", Content: assistant},
+		},
+	}
+	got := PromptFromChat(in)
+	want := "user: do it\nassistant: assistant_tool_call: Agent"
+	if got != want {
+		t.Fatalf("prompt=%q want=%q", got, want)
+	}
+}
+
 func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
 	usage := ChatUsageFromCharCount("hi", "回应")
 	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {

@@ -824,6 +824,7 @@ func normalizeAssistantHistoryContent(content string) string {
 
 	var rawNames []string
 	var foundRaw bool
+	parsedCallCount := len(toolCalls)
 	strippedCurrent, strippedNames, foundRaw := stripRawToolCallArtifacts(current)
 	if foundRaw {
 		if !toolCallRawDebugPreserveEnabled() {
@@ -840,6 +841,9 @@ func normalizeAssistantHistoryContent(content string) string {
 
 	current = strings.TrimSpace(current)
 	if current != "" {
+		if foundRaw && parsedCallCount == 0 && len(rawNames) > 0 {
+			return summarizeAssistantToolCalls(toolCalls)
+		}
 		return current
 	}
 	return summarizeAssistantToolCalls(toolCalls)
