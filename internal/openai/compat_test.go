@@ -1069,6 +1069,40 @@ func TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText(t *testing.
 	}
 }
 
+func TestParseToolSentinelMalformedTagWrappedToolCallRecoversLaterCandidateWithWarning(t *testing.T) {
+	text := "prefix <tool_call><multi_tool_use.parallel>{\"tool_uses\":[}</multi_tool_use.parallel></tool_call> mid <tool_call><Read>{\"file_path\":\"go.mod\"}</Read></tool_call> suffix"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Read" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if !strings.Contains(res.Content, "请一次只调用一个工具") {
+		t.Fatalf("missing warning content=%q", res.Content)
+	}
+	if !strings.Contains(res.Content, "一个一个地调用") {
+		t.Fatalf("missing sequential hint content=%q", res.Content)
+	}
+}
+
+func TestParseToolSentinelMalformedTagWrappedToolCallWarnsWhenMixedWithValidCandidate(t *testing.T) {
+	text := "start <tool_call><Read>{\"file_path\":\"go.mod\"}</Read></tool_call> then <tool_call><multi_tool_use.parallel>{\"tool_uses\":[}</multi_tool_use.parallel></tool_call> end"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Read" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if !strings.Contains(res.Content, "请一次只调用一个工具") {
+		t.Fatalf("missing warning content=%q", res.Content)
+	}
+	if !strings.Contains(res.Content, "一个一个地调用") {
+		t.Fatalf("missing sequential hint content=%q", res.Content)
+	}
+}
+
 func TestParseToolSentinelFallbackActionToolInput(t *testing.T) {
 	text := "answer\n```json\n{\"action\":\"call_tool\",\"tool\":\"mcp__kqSse__checkLoginStatus\",\"input\":{}}\n```"
 	res := ParseToolSentinel(text)

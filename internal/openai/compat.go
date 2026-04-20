@@ -34,6 +34,8 @@ var (
 
 const DefaultModel = "qingyuan"
 
+const malformedMultiToolCallWarning = "检测到 malformed tool_call 块且消息中存在多个工具调用候选块。请一次只调用一个工具，建议一个一个地调用。"
+
 type Message struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"`
@@ -1471,44 +1473,97 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	if trimmed == "" {
 		return ToolParseResult{Content: ""}
 	}
-	openIdx := toolCallOpenTagRe.FindStringIndex(trimmed)
-	if openIdx == nil {
+	if toolCallOpenTagRe.FindStringIndex(trimmed) == nil {
 		return ToolParseResult{Content: trimmed}
 	}
-	start := openIdx[0]
-	innerStart := openIdx[1]
-	closeIdx := toolCallCloseTagRe.FindStringIndex(trimmed[innerStart:])
-	innerEnd := len(trimmed)
-	rightStart := len(trimmed)
-	if closeIdx != nil {
-		innerEnd = innerStart + closeIdx[0]
-		rightStart = innerStart + closeIdx[1]
+	candidateCount, malformedFound, firstCall, firstStart, firstEnd, foundValid := scanTaggedToolCallCandidates(trimmed)
+	if !foundValid {
+		content := trimmed
+		if malformedFound && candidateCount > 1 {
+			content = appendMalformedMultiToolCallWarning(content)
+		}
+		return ToolParseResult{Content: content}
 	}
-	inner := strings.TrimSpace(trimmed[innerStart:innerEnd])
-	name, argBytes, ok := parseTaggedToolCall(inner)
-	if !ok {
-		return ToolParseResult{Content: trimmed}
+	content := removeTaggedToolCallBlock(trimmed, firstStart, firstEnd)
+	if malformedFound && candidateCount > 1 {
+		content = appendMalformedMultiToolCallWarning(content)
 	}
-	left := trimmed[:start]
-	right := ""
-	if closeIdx != nil {
-		right = trimmed[rightStart:]
+	return ToolParseResult{
+		ToolCalls: []ToolCall{firstCall},
+		Content:   content,
 	}
-	right = stripLeadingToolCallCloseTags(right)
+}
+
+func scanTaggedToolCallCandidates(text string) (int, bool, ToolCall, int, int, bool) {
+	candidateCount := 0
+	malformedFound := false
+	firstStart := -1
+	firstEnd := -1
+	var firstCall ToolCall
+
+	cursor := 0
+	for cursor < len(text) {
+		openIdx := toolCallOpenTagRe.FindStringIndex(text[cursor:])
+		if openIdx == nil {
+			break
+		}
+		start := cursor + openIdx[0]
+		innerStart := cursor + openIdx[1]
+		candidateCount++
+
+		closeIdx := toolCallCloseTagRe.FindStringIndex(text[innerStart:])
+		innerEnd := len(text)
+		blockEnd := len(text)
+		if closeIdx != nil {
+			innerEnd = innerStart + closeIdx[0]
+			blockEnd = innerStart + closeIdx[1]
+		}
+		inner := strings.TrimSpace(text[innerStart:innerEnd])
+		name, argBytes, ok := parseTaggedToolCall(inner)
+		if ok && firstStart < 0 {
+			firstStart = start
+			firstEnd = blockEnd
+			firstCall = ToolCall{
+				ID:        newID("call"),
+				Name:      name,
+				Arguments: string(argBytes),
+			}
+		}
+		if !ok {
+			malformedFound = true
+		}
+		if closeIdx == nil {
+			break
+		}
+		cursor = blockEnd
+	}
+
+	return candidateCount, malformedFound, firstCall, firstStart, firstEnd, firstStart >= 0
+}
+
+func removeTaggedToolCallBlock(text string, start int, end int) string {
+	if start < 0 || end < start || end > len(text) {
+		return strings.TrimSpace(text)
+	}
+	left := text[:start]
+	right := stripLeadingToolCallCloseTags(text[end:])
 	// If removing the tag would create a doubled space at the join point,
 	// drop exactly one leading space from the right side (don't globally normalize whitespace).
 	if strings.HasSuffix(left, " ") && !strings.HasSuffix(left, "  ") && strings.HasPrefix(right, " ") {
 		right = strings.TrimPrefix(right, " ")
 	}
-	content := strings.TrimSpace(left + right)
-	return ToolParseResult{
-		ToolCalls: []ToolCall{{
-			ID:        newID("call"),
-			Name:      name,
-			Arguments: string(argBytes),
-		}},
-		Content: content,
+	return strings.TrimSpace(left + right)
+}
+
+func appendMalformedMultiToolCallWarning(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if strings.Contains(trimmed, "请一次只调用一个工具") && strings.Contains(trimmed, "一个一个地调用") {
+		return trimmed
 	}
+	if trimmed == "" {
+		return malformedMultiToolCallWarning
+	}
+	return trimmed + "\n\n" + malformedMultiToolCallWarning
 }
 
 func parseTaggedToolCall(inner string) (string, []byte, bool) {
