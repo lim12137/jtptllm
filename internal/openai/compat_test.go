@@ -698,6 +698,24 @@ func TestParseToolSentinelTagWrappedToolCallXMLArgs(t *testing.T) {
 	}
 }
 
+func TestParseToolSentinelTagWrappedToolCallToolNameJSONArgs(t *testing.T) {
+	text := `<tool_call><tool_name>Glob</tool_name>{"pattern":"*.md"}</tool_call>`
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Glob" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args["pattern"] != "*.md" {
+		t.Fatalf("args=%v", args)
+	}
+}
+
 func TestParseToolSentinelTagWrappedToolCallCompatibility(t *testing.T) {
 	t.Run("self-closing attributes", func(t *testing.T) {
 		text := `<tool_call><Glob pattern="*" path="d:/1work/api调用" /></tool_call>`

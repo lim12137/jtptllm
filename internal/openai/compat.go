@@ -1155,6 +1155,10 @@ func parseTaggedToolCall(inner string) (string, []byte, bool) {
 		return "", nil, false
 	}
 
+	if name, argBytes, ok := parseToolNameTaggedToolCall(trimmed); ok {
+		return name, argBytes, true
+	}
+
 	if strings.HasSuffix(trimmed, "/>") {
 		name, argBytes, ok := parseSelfClosingTaggedToolCall(trimmed)
 		if ok {
@@ -1176,6 +1180,33 @@ func parseTaggedToolCall(inner string) (string, []byte, bool) {
 		return "", nil, false
 	}
 	argText := strings.TrimSpace(trimmed[nameEnd+1 : closeInnerIdx])
+	if argText == "" {
+		return "", nil, false
+	}
+	argBytes, ok := parseTaggedToolArguments(argText)
+	if !ok {
+		return "", nil, false
+	}
+	return name, argBytes, true
+}
+
+func parseToolNameTaggedToolCall(inner string) (string, []byte, bool) {
+	trimmed := strings.TrimSpace(inner)
+	lower := strings.ToLower(trimmed)
+	const openTag = "<tool_name>"
+	const closeTag = "</tool_name>"
+	if !strings.HasPrefix(lower, openTag) {
+		return "", nil, false
+	}
+	closeIdx := strings.Index(lower, closeTag)
+	if closeIdx < 0 {
+		return "", nil, false
+	}
+	name := strings.TrimSpace(trimmed[len(openTag):closeIdx])
+	if name == "" {
+		return "", nil, false
+	}
+	argText := strings.TrimSpace(trimmed[closeIdx+len(closeTag):])
 	if argText == "" {
 		return "", nil, false
 	}
