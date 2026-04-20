@@ -1,43 +1,29 @@
-# 2026-04-20 chat.completions 流式 usage 修复报告
+# 2026-04-20 chat stream usage fix 验证报告
 
 ## 结论
 
-- 根因与假设一致：`/v1/chat/completions` 的 `stream=true` 分支此前只输出文本/工具调用 chunk 和 `[DONE]`，最终 chunk 不包含 `usage`，因此依赖最终 SSE chunk 的 CLI 无法显示 token 使用量。
-- 已按 TDD 修复：
-  - 先新增失败测试，覆盖 chat 流式最终 chunk 透传上游 usage。
-  - 再新增失败测试，覆盖上游缺失 usage 时回退为字符数估算。
-  - 最小实现只补齐 chat 流式最终 chunk 的 `usage`，不改变现有 SSE 基本顺序。
+当前 `internal/http/handlers.go` 与 `internal/http/handlers_test.go` 的 diff 已实现 `chat.completions` 流式 `usage` 修复：
 
-## 修改文件
+- 流式收集从 `collectStreamText` 改为 `collectStreamTextWithUsage`，可以在消费网关 SSE 时同时提取 `usage`。
+- `handleChatCompletions` 的两条流式分支都会在构造最终响应时填充 `usage`。
+- `streamChatCompletion` 与 `streamChatCompletionFromResponse` 会把 `usage` 写入最终 `chat.completion.chunk`。
+- 新增回归测试覆盖：
+  - 上游已返回 `usage` 的透传行为
+  - 上游未返回 `usage` 时的字符数 fallback 行为
 
-- `internal/http/handlers.go`
-- `internal/http/handlers_test.go`
-
-## 测试命令
+## 验证命令
 
 ```powershell
-& 'C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe' test ./internal/http -run 'TestChatCompletionsStream(PassesThroughUsage|FallsBackToCharCountUsageWhenMissing)' -count=1
-```
-
-```powershell
-& 'C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe' test ./internal/http -count=1
-```
-
-```powershell
-& 'C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe' test ./... -count=1
+& 'C:\Users\Administrator\.tools\go1.22.12\go\bin\go.exe' test ./internal/http -run 'TestChatCompletionsStream(PassesThroughUsage|FallsBackToCharCountUsageWhenMissing)$' -v
 ```
 
 ## 结果摘要
 
-- `TestChatCompletionsStreamPassesThroughUsage`: 通过
-- `TestChatCompletionsStreamFallsBackToCharCountUsageWhenMissing`: 通过
-- `go test ./internal/http -count=1`: 通过
-- `go test ./... -count=1`: 通过
-
-## 行为说明
-
-- 非工具调用的 chat 流式响应：
-  - 若上游流末尾带 `usage`，则代理在最终 `chat.completion.chunk` 中透传 `usage`。
-  - 若上游未带 `usage`，则代理按现有 fallback 逻辑生成 `prompt_tokens` / `completion_tokens` / `total_tokens`。
-- 工具调用的 chat 流式响应：
-  - 最终 `finish_reason=tool_calls` 的 chunk 同样携带 `usage`。
+- 命令退出码：`0`
+- 通过测试：
+  - `TestChatCompletionsStreamPassesThroughUsage`
+  - `TestChatCompletionsStreamFallsBackToCharCountUsageWhenMissing`
+- 关键结论：
+  - 流式最终 chunk 已包含 `usage`
+  - 上游 `usage` 会透传
+  - 上游缺失 `usage` 时会回退到字符数估算
