@@ -34,7 +34,7 @@ var (
 
 const DefaultModel = "qingyuan"
 
-const malformedMultiToolCallWarning = "检测到 malformed tool_call 块且消息中存在多个工具调用候选块。请一次只调用一个工具，建议一个一个地调用。"
+const malformedMultiToolCallRetryInstruction = "本次 tool-call 格式不完整，已忽略，请重试，并且一次只调用一个 tool-call。"
 
 type Message struct {
 	Role    string `json:"role"`
@@ -64,6 +64,7 @@ type ToolParseResult struct {
 	ToolCalls   []ToolCall
 	Content     string
 	HasSentinel bool
+	NeedsRetry  bool
 }
 
 func intFromAny(v any) (int, bool) {
@@ -1362,7 +1363,7 @@ func ParseToolSentinel(text string) ToolParseResult {
 			return res
 		}
 		res = parseToolCallTaggedBlock(text)
-		if len(res.ToolCalls) > 0 {
+		if len(res.ToolCalls) > 0 || res.NeedsRetry {
 			return res
 		}
 		return parseToolCallRawJSON(text)
@@ -1477,17 +1478,15 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 		return ToolParseResult{Content: trimmed}
 	}
 	candidateCount, malformedFound, firstCall, firstStart, firstEnd, foundValid := scanTaggedToolCallCandidates(trimmed)
+	if malformedFound && candidateCount > 1 {
+		// Multiple candidates plus malformed block => treat this parse as invalid.
+		// Do not partially recover to avoid leaking ambiguous tool_call state.
+		return ToolParseResult{Content: trimmed, NeedsRetry: true}
+	}
 	if !foundValid {
-		content := trimmed
-		if malformedFound && candidateCount > 1 {
-			content = appendMalformedMultiToolCallWarning(content)
-		}
-		return ToolParseResult{Content: content}
+		return ToolParseResult{Content: trimmed}
 	}
 	content := removeTaggedToolCallBlock(trimmed, firstStart, firstEnd)
-	if malformedFound && candidateCount > 1 {
-		content = appendMalformedMultiToolCallWarning(content)
-	}
 	return ToolParseResult{
 		ToolCalls: []ToolCall{firstCall},
 		Content:   content,
@@ -1555,15 +1554,20 @@ func removeTaggedToolCallBlock(text string, start int, end int) string {
 	return strings.TrimSpace(left + right)
 }
 
-func appendMalformedMultiToolCallWarning(content string) string {
-	trimmed := strings.TrimSpace(content)
-	if strings.Contains(trimmed, "请一次只调用一个工具") && strings.Contains(trimmed, "一个一个地调用") {
+func NeedsToolCallRetry(text string) bool {
+	return ParseToolSentinel(text).NeedsRetry
+}
+
+func AppendHiddenToolCallRetryPrompt(prompt string) string {
+	trimmed := strings.TrimSpace(prompt)
+	retryLine := "system: " + malformedMultiToolCallRetryInstruction
+	if strings.Contains(trimmed, malformedMultiToolCallRetryInstruction) {
 		return trimmed
 	}
 	if trimmed == "" {
-		return malformedMultiToolCallWarning
+		return retryLine
 	}
-	return trimmed + "\n\n" + malformedMultiToolCallWarning
+	return trimmed + "\n" + retryLine
 }
 
 func parseTaggedToolCall(inner string) (string, []byte, bool) {

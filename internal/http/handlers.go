@@ -38,6 +38,8 @@ type Server struct {
 	globalGate   chan struct{}
 }
 
+const maxMalformedToolCallAutoRetry = 1
+
 func NewServer(gateway Gateway, sessions *session.PoolManager, opts Options) *Server {
 	model := strings.TrimSpace(opts.DefaultModel)
 	if model == "" {
@@ -179,17 +181,11 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	})
 
 	if !parsed.Stream {
-		_, runResp, err := s.gateway.Run(r.Context(), gateway.RunRequest{
-			SessionID: sessionID,
-			Text:      parsed.Prompt,
-			Stream:    false,
-			Delta:     false,
-		})
+		runResp, text, promptUsed, err := s.runNonStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
-		text := extractGatewayTextFromNonStream(runResp)
 		if text == "" {
 			if msg, ok := gatewayRunError(runResp); ok {
 				writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
@@ -199,7 +195,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		respPayload := openai.BuildChatCompletionResponseFromText(text, parsed.Model)
 		usage := openai.NormalizeChatUsage(extractGatewayUsage(runResp))
 		if usage == nil {
-			usage = openai.ChatUsageFromCharCount(parsed.Prompt, text)
+			usage = openai.ChatUsageFromCharCount(promptUsed, text)
 		}
 		respPayload["usage"] = usage
 		logIO(map[string]any{
@@ -217,18 +213,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 
 	if parsed.HasTools {
-		resp, _, err := s.gateway.Run(r.Context(), gateway.RunRequest{
-			SessionID: sessionID,
-			Text:      parsed.Prompt,
-			Stream:    true,
-			Delta:     true,
-		})
-		if err != nil {
-			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
-			return
-		}
-		defer resp.Body.Close()
-		streamText, rawUsage, err := collectStreamTextWithUsage(resp.Body)
+		streamText, rawUsage, promptUsed, err := s.runStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
@@ -236,7 +221,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		respPayload := openai.BuildChatCompletionResponseFromText(streamText, parsed.Model)
 		usage := openai.NormalizeChatUsage(rawUsage)
 		if usage == nil {
-			usage = openai.ChatUsageFromCharCount(parsed.Prompt, streamText)
+			usage = openai.ChatUsageFromCharCount(promptUsed, streamText)
 		}
 		respPayload["usage"] = usage
 		logIO(map[string]any{
@@ -255,18 +240,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 
-	resp, _, err := s.gateway.Run(r.Context(), gateway.RunRequest{
-		SessionID: sessionID,
-		Text:      parsed.Prompt,
-		Stream:    true,
-		Delta:     true,
-	})
-	if err != nil {
-		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-	streamOutput, rawUsage, err := collectStreamTextWithUsage(resp.Body)
+	streamOutput, rawUsage, promptUsed, err := s.runStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
 	if err != nil {
 		log.Printf("stream chat completions error: %v", err)
 		return
@@ -278,7 +252,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	}
 	usage := openai.NormalizeChatUsage(rawUsage)
 	if usage == nil {
-		usage = openai.ChatUsageFromCharCount(parsed.Prompt, streamOutput)
+		usage = openai.ChatUsageFromCharCount(promptUsed, streamOutput)
 	}
 	respPayload["usage"] = usage
 	if err := streamChatCompletionFromResponse(w, respPayload); err != nil {
@@ -335,17 +309,11 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	})
 
 	if !parsed.Stream {
-		_, runResp, err := s.gateway.Run(r.Context(), gateway.RunRequest{
-			SessionID: sessionID,
-			Text:      parsed.Prompt,
-			Stream:    false,
-			Delta:     false,
-		})
+		runResp, text, promptUsed, err := s.runNonStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
-		text := extractGatewayTextFromNonStream(runResp)
 		if text == "" {
 			if msg, ok := gatewayRunError(runResp); ok {
 				writeJSON(w, stdhttp.StatusBadGateway, openaiUpstreamError(msg))
@@ -355,7 +323,7 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		respPayload := openai.BuildResponsesResponseFromText(text, parsed.Model)
 		usage := openai.NormalizeResponsesUsage(extractGatewayUsage(runResp))
 		if usage == nil {
-			usage = openai.ResponsesUsageFromCharCount(parsed.Prompt, text)
+			usage = openai.ResponsesUsageFromCharCount(promptUsed, text)
 		}
 		respPayload["usage"] = usage
 		logIO(map[string]any{
@@ -373,18 +341,7 @@ func (s *Server) handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 
 	if parsed.HasTools {
-		resp, _, err := s.gateway.Run(r.Context(), gateway.RunRequest{
-			SessionID: sessionID,
-			Text:      parsed.Prompt,
-			Stream:    true,
-			Delta:     true,
-		})
-		if err != nil {
-			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
-			return
-		}
-		defer resp.Body.Close()
-		streamText, err := collectStreamText(resp.Body)
+		streamText, _, _, err := s.runStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
@@ -453,6 +410,52 @@ func (s *Server) ensureSession(ctx context.Context, r *stdhttp.Request) (string,
 		lease.Release(ctx, close)
 	}
 	return lease.SessionID(), release, closeAfter, key, nil
+}
+
+func (s *Server) runNonStreamTextWithToolCallRetry(ctx context.Context, sessionID string, prompt string) (map[string]any, string, string, error) {
+	promptUsed := strings.TrimSpace(prompt)
+	for attempt := 0; ; attempt++ {
+		_, runResp, err := s.gateway.Run(ctx, gateway.RunRequest{
+			SessionID: sessionID,
+			Text:      promptUsed,
+			Stream:    false,
+			Delta:     false,
+		})
+		if err != nil {
+			return nil, "", promptUsed, err
+		}
+		text := extractGatewayTextFromNonStream(runResp)
+		if attempt < maxMalformedToolCallAutoRetry && openai.NeedsToolCallRetry(text) {
+			promptUsed = openai.AppendHiddenToolCallRetryPrompt(prompt)
+			continue
+		}
+		return runResp, text, promptUsed, nil
+	}
+}
+
+func (s *Server) runStreamTextWithToolCallRetry(ctx context.Context, sessionID string, prompt string) (string, map[string]any, string, error) {
+	promptUsed := strings.TrimSpace(prompt)
+	for attempt := 0; ; attempt++ {
+		resp, _, err := s.gateway.Run(ctx, gateway.RunRequest{
+			SessionID: sessionID,
+			Text:      promptUsed,
+			Stream:    true,
+			Delta:     true,
+		})
+		if err != nil {
+			return "", nil, promptUsed, err
+		}
+		streamText, rawUsage, readErr := collectStreamTextWithUsage(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return "", nil, promptUsed, readErr
+		}
+		if attempt < maxMalformedToolCallAutoRetry && openai.NeedsToolCallRetry(streamText) {
+			promptUsed = openai.AppendHiddenToolCallRetryPrompt(prompt)
+			continue
+		}
+		return streamText, rawUsage, promptUsed, nil
+	}
 }
 
 func withCORS(next stdhttp.Handler) stdhttp.Handler {

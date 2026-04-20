@@ -1069,37 +1069,46 @@ func TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText(t *testing.
 	}
 }
 
-func TestParseToolSentinelMalformedTagWrappedToolCallRecoversLaterCandidateWithWarning(t *testing.T) {
+func TestParseToolSentinelMalformedTagWrappedToolCallInvalidatesMixedCandidates(t *testing.T) {
 	text := "prefix <tool_call><multi_tool_use.parallel>{\"tool_uses\":[}</multi_tool_use.parallel></tool_call> mid <tool_call><Read>{\"file_path\":\"go.mod\"}</Read></tool_call> suffix"
 	res := ParseToolSentinel(text)
-	if len(res.ToolCalls) != 1 {
+	if len(res.ToolCalls) != 0 {
 		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
 	}
-	if res.ToolCalls[0].Name != "Read" {
-		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	if strings.TrimSpace(res.Content) != strings.TrimSpace(text) {
+		t.Fatalf("content=%q", res.Content)
 	}
-	if !strings.Contains(res.Content, "请一次只调用一个工具") {
-		t.Fatalf("missing warning content=%q", res.Content)
-	}
-	if !strings.Contains(res.Content, "一个一个地调用") {
-		t.Fatalf("missing sequential hint content=%q", res.Content)
+	if !res.NeedsRetry {
+		t.Fatalf("needsRetry=false")
 	}
 }
 
-func TestParseToolSentinelMalformedTagWrappedToolCallWarnsWhenMixedWithValidCandidate(t *testing.T) {
+func TestParseToolSentinelMalformedTagWrappedToolCallInvalidatesEvenWhenFirstIsValid(t *testing.T) {
 	text := "start <tool_call><Read>{\"file_path\":\"go.mod\"}</Read></tool_call> then <tool_call><multi_tool_use.parallel>{\"tool_uses\":[}</multi_tool_use.parallel></tool_call> end"
 	res := ParseToolSentinel(text)
-	if len(res.ToolCalls) != 1 {
+	if len(res.ToolCalls) != 0 {
 		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
 	}
-	if res.ToolCalls[0].Name != "Read" {
-		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	if strings.TrimSpace(res.Content) != strings.TrimSpace(text) {
+		t.Fatalf("content=%q", res.Content)
 	}
-	if !strings.Contains(res.Content, "请一次只调用一个工具") {
-		t.Fatalf("missing warning content=%q", res.Content)
+	if !res.NeedsRetry {
+		t.Fatalf("needsRetry=false")
 	}
-	if !strings.Contains(res.Content, "一个一个地调用") {
-		t.Fatalf("missing sequential hint content=%q", res.Content)
+}
+
+func TestAppendHiddenToolCallRetryPrompt(t *testing.T) {
+	base := "user: hi\nassistant: bad tool call"
+	got := AppendHiddenToolCallRetryPrompt(base)
+	if !strings.Contains(got, "本次 tool-call 格式不完整，已忽略，请重试，并且一次只调用一个 tool-call。") {
+		t.Fatalf("missing retry prompt: %q", got)
+	}
+	if !strings.Contains(got, "system: ") {
+		t.Fatalf("missing system prefix: %q", got)
+	}
+	got2 := AppendHiddenToolCallRetryPrompt(got)
+	if got2 != got {
+		t.Fatalf("prompt should be idempotent, got=%q got2=%q", got, got2)
 	}
 }
 
