@@ -208,6 +208,21 @@ func TestNormalizeAssistantHistoryContentMalformedToolNameWrapperUsesInnerName(t
 	}
 }
 
+func TestNormalizeAssistantHistoryContentUnclosedToolCallTagStrippedInNormalMode(t *testing.T) {
+	t.Setenv("PROXY_LOG_IO", "")
+	src := `<tool_call>
+  <Bash>
+  <command>ls -la</command>
+  <description>List all files and directories in the current directory</description>
+  </command>
+  </Bash>`
+	got := normalizeAssistantHistoryContent(src)
+	want := "assistant_tool_call: Bash"
+	if got != want {
+		t.Fatalf("got=%q want=%q", got, want)
+	}
+}
+
 func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
 	usage := ChatUsageFromCharCount("hi", "回应")
 	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {

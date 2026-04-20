@@ -17,6 +17,7 @@ var (
 	thinkingBlockRe       = regexp.MustCompile(`(?is)<thinking\b[^>]*>.*?</thinking>`)
 	thinkingSelfClosingRe = regexp.MustCompile(`(?is)<thinking\b[^>]*/>`)
 	toolCallTagBlockRe    = regexp.MustCompile(`(?is)<tool_call\b[^>]*>.*?</tool_call>`)
+	toolCallOpenTagRe     = regexp.MustCompile(`(?is)<tool_call\b[^>]*>`)
 	tcSentinelBlockRe     = regexp.MustCompile(`(?is)(?:<<<TC>>>|<<TC>>).*?(?:<<<END>>>|<<END>>)`)
 	taggedToolNameRe      = regexp.MustCompile(`(?is)<tool_call\b[^>]*>\s*<([A-Za-z0-9_.:-]+)\b`)
 	toolNameValueRe       = regexp.MustCompile(`(?is)<tool_name>\s*([^<]+?)\s*</tool_name>`)
@@ -875,10 +876,34 @@ func stripRawToolCallArtifacts(content string) (string, []string, bool) {
 	}
 	out := toolCallTagBlockRe.ReplaceAllStringFunc(content, replaceFn)
 	out = tcSentinelBlockRe.ReplaceAllStringFunc(out, replaceFn)
+	if cleaned, extraNames, ok := stripUnclosedToolCallArtifacts(out); ok {
+		found = true
+		out = cleaned
+		names = append(names, extraNames...)
+	}
 	if !found {
 		return content, nil, false
 	}
 	return strings.TrimSpace(out), uniqueNonEmptyNames(names), true
+}
+
+func stripUnclosedToolCallArtifacts(content string) (string, []string, bool) {
+	lower := strings.ToLower(content)
+	opens := toolCallOpenTagRe.FindAllStringIndex(content, -1)
+	for _, idx := range opens {
+		start := idx[0]
+		end := idx[1]
+		if strings.Contains(lower[end:], "</tool_call>") {
+			continue
+		}
+		block := content[start:]
+		name := strings.TrimSpace(inferToolNameFromArtifact(block))
+		if name == "" {
+			continue
+		}
+		return strings.TrimSpace(content[:start]), []string{name}, true
+	}
+	return content, nil, false
 }
 
 func inferToolNameFromArtifact(block string) string {
