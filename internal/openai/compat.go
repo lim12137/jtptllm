@@ -331,19 +331,20 @@ func injectModelMarker(model string, prompt string) string {
 }
 
 type tokenEstimateStats struct {
-	cjkCount          int
-	asciiLetterCount  int
-	digitCount        int
-	whitespaceCount   int
-	punctCount        int
-	jsonSyntaxCount   int
-	xmlSyntaxCount    int
-	newlineCount      int
-	wordCount         int
-	longWordCount     int
-	roleLineCount     int
-	modelMarkerCount  int
-	toolPrefixSignals int
+	cjkCount            int
+	asciiLetterCount    int
+	nonASCIILetterCount int
+	digitCount          int
+	whitespaceCount     int
+	punctCount          int
+	jsonSyntaxCount     int
+	xmlSyntaxCount      int
+	newlineCount        int
+	wordCount           int
+	longWordCount       int
+	roleLineCount       int
+	modelMarkerCount    int
+	toolPrefixSignals   int
 }
 
 const (
@@ -367,6 +368,8 @@ const (
 	cjkCompressionDivisor   = 4
 	mixedScriptOverhead     = 4
 	structuredWordThreshold = 8
+	standalonePunctDivisor  = 2
+	standalonePunctBase     = 2
 )
 
 func collectTokenEstimateStats(text string) tokenEstimateStats {
@@ -375,17 +378,17 @@ func collectTokenEstimateStats(text string) tokenEstimateStats {
 		return stats
 	}
 
-	inASCIIWord := false
+	inWord := false
 	currentWordLen := 0
 	finalizeWord := func() {
-		if !inASCIIWord {
+		if !inWord {
 			return
 		}
 		stats.wordCount++
 		if currentWordLen >= longWordThreshold {
 			stats.longWordCount++
 		}
-		inASCIIWord = false
+		inWord = false
 		currentWordLen = 0
 	}
 
@@ -422,10 +425,14 @@ func collectTokenEstimateStats(text string) tokenEstimateStats {
 			stats.digitCount++
 			continue
 		}
-		if isASCIIWordRune(r) {
-			inASCIIWord = true
+		if isTokenWordRune(r) {
+			inWord = true
 			currentWordLen++
-			stats.asciiLetterCount++
+			if r < utf8.RuneSelf {
+				stats.asciiLetterCount++
+			} else {
+				stats.nonASCIILetterCount++
+			}
 			continue
 		}
 		if unicode.IsPunct(r) || unicode.IsSymbol(r) {
@@ -470,8 +477,14 @@ func collectTokenEstimateStats(text string) tokenEstimateStats {
 	return stats
 }
 
-func isASCIIWordRune(r rune) bool {
-	return r < utf8.RuneSelf && (unicode.IsLetter(r) || r == '_')
+func isTokenWordRune(r rune) bool {
+	if r == '_' {
+		return true
+	}
+	if isCJKTokenRune(r) {
+		return false
+	}
+	return unicode.IsLetter(r)
 }
 
 func isCJKTokenRune(r rune) bool {
@@ -568,6 +581,9 @@ func estimateTextTokens(text string) int {
 
 	if stats.wordCount > 0 && stats.cjkCount > 0 {
 		score += mixedScriptOverhead
+	}
+	if stats.punctCount > 0 && stats.wordCount == 0 && stats.cjkCount == 0 && stats.digitCount == 0 && !structuredText && !codeLike {
+		score += max(standalonePunctBase, ceilDiv(stats.punctCount, standalonePunctDivisor))
 	}
 	if stats.roleLineCount > 0 {
 		score += stats.roleLineCount
