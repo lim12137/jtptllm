@@ -1,5 +1,15 @@
 @echo off
 setlocal
+set "SCRIPT_DIR=%~dp0"
+set "LOG_DIR=%SCRIPT_DIR%bin\logs"
+set "OUT_LOG=%LOG_DIR%\proxy_8022.log"
+set "ERR_LOG=%LOG_DIR%\proxy_8022.err"
+
+pushd "%SCRIPT_DIR%" >nul
+
+if not exist "%LOG_DIR%" (
+    mkdir "%LOG_DIR%"
+)
 
 set "PORT=8022"
 set "GOEXE="
@@ -41,12 +51,16 @@ set "PROXY_LOG_IO=1"
 
 if defined USE_FALLBACK (
     echo Go toolchain not found. Falling back to scripts\restart_proxy.ps1...
-    %PS_CMD% -File "scripts\restart_proxy.ps1" -Port %PORT% -BinPath "bin\proxy.exe" -LogIO
-    exit /b %errorlevel%
+    %PS_CMD% -File "%SCRIPT_DIR%scripts\restart_proxy.ps1" -Port %PORT% -BinPath "bin\proxy.exe" -LogIO
+    set "EXIT_CODE=%errorlevel%"
+    popd
+    endlocal & exit /b %EXIT_CODE%
 )
 
 echo Starting proxy debug mode on port %PORT% with %GOEXE%...
+echo Logs: "%OUT_LOG%" and "%ERR_LOG%"
 echo Press Ctrl+C to stop.
-"%GOEXE%" run ./cmd/proxy
+"%GOEXE%" run ./cmd/proxy 1>>"%OUT_LOG%" 2>>"%ERR_LOG%"
 
+popd
 endlocal
