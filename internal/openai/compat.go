@@ -14,17 +14,22 @@ import (
 )
 
 var (
-	modelMarkerRe         = regexp.MustCompile(`\*\*model\s*=\s*[^*]+\*\*`)
-	thinkingBlockRe       = regexp.MustCompile(`(?is)<thinking\b[^>]*>.*?</thinking>`)
-	thinkingSelfClosingRe = regexp.MustCompile(`(?is)<thinking\b[^>]*/>`)
-	toolCallTagBlockRe    = regexp.MustCompile(`(?is)<tool_call\b[^>]*>.*?</tool_call>`)
-	toolCallOpenTagRe     = regexp.MustCompile(`(?is)<tool_call\b[^>]*>`)
-	tcSentinelBlockRe     = regexp.MustCompile(`(?is)(?:<<<TC>>>|<<TC>>).*?(?:<<<END>>>|<<END>>)`)
-	taggedToolNameRe      = regexp.MustCompile(`(?is)<tool_call\b[^>]*>\s*<([A-Za-z0-9_.:-]+)\b`)
-	toolNameValueRe       = regexp.MustCompile(`(?is)<tool_name>\s*([^<]+?)\s*</tool_name>`)
-	jsonToolNRe           = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
-	jsonToolNameRe        = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
-	jsonToolKeyRe         = regexp.MustCompile(`(?is)"tool(?:Name)?"\s*:\s*"([^"]+)"`)
+	modelMarkerRe          = regexp.MustCompile(`\*\*model\s*=\s*[^*]+\*\*`)
+	thinkingBlockRe        = regexp.MustCompile(`(?is)<thinking\b[^>]*>.*?</thinking>`)
+	thinkingSelfClosingRe  = regexp.MustCompile(`(?is)<thinking\b[^>]*/>`)
+	toolCallTagBlockRe     = regexp.MustCompile(`(?is)<tool_call\b[^>]*>.*?</tool_call>`)
+	toolCallOpenTagRe      = regexp.MustCompile(`(?is)<tool_call\b[^>]*>`)
+	toolCallCloseTagRe     = regexp.MustCompile(`(?is)</tool_call\s*>`)
+	leadingToolCallCloseRe = regexp.MustCompile(`(?is)^\s*</tool_call\s*>`)
+	tcSentinelBlockRe      = regexp.MustCompile(`(?is)(?:<<<TC>>>|<<TC>>).*?(?:<<<END>>>|<<END>>)`)
+	taggedToolNameRe       = regexp.MustCompile(`(?is)<tool_call\b[^>]*>\s*<([A-Za-z0-9_.:-]+)\b`)
+	toolNameValueRe        = regexp.MustCompile(`(?is)<tool_name>\s*([^<]+?)\s*</tool_name>`)
+	toolNameOpenTagRe      = regexp.MustCompile(`(?is)^<tool_name\b[^>]*>`)
+	trailingCloseTagsRe    = regexp.MustCompile(`(?is)(?:\s*</[A-Za-z0-9_.:-]+\s*>)+\s*$`)
+	toolNameTokenRe        = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	jsonToolNRe            = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
+	jsonToolNameRe         = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
+	jsonToolKeyRe          = regexp.MustCompile(`(?is)"tool(?:Name)?"\s*:\s*"([^"]+)"`)
 )
 
 const DefaultModel = "qingyuan"
@@ -1466,25 +1471,30 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	if trimmed == "" {
 		return ToolParseResult{Content: ""}
 	}
-	const openTag = "<tool_call>"
-	const closeTag = "</tool_call>"
-	start := strings.Index(trimmed, openTag)
-	if start < 0 {
+	openIdx := toolCallOpenTagRe.FindStringIndex(trimmed)
+	if openIdx == nil {
 		return ToolParseResult{Content: trimmed}
 	}
-	end := strings.Index(trimmed[start+len(openTag):], closeTag)
-	if end < 0 {
-		return ToolParseResult{Content: trimmed}
+	start := openIdx[0]
+	innerStart := openIdx[1]
+	closeIdx := toolCallCloseTagRe.FindStringIndex(trimmed[innerStart:])
+	innerEnd := len(trimmed)
+	rightStart := len(trimmed)
+	if closeIdx != nil {
+		innerEnd = innerStart + closeIdx[0]
+		rightStart = innerStart + closeIdx[1]
 	}
-	innerStart := start + len(openTag)
-	innerEnd := innerStart + end
 	inner := strings.TrimSpace(trimmed[innerStart:innerEnd])
 	name, argBytes, ok := parseTaggedToolCall(inner)
 	if !ok {
 		return ToolParseResult{Content: trimmed}
 	}
 	left := trimmed[:start]
-	right := trimmed[innerEnd+len(closeTag):]
+	right := ""
+	if closeIdx != nil {
+		right = trimmed[rightStart:]
+	}
+	right = stripLeadingToolCallCloseTags(right)
 	// If removing the tag would create a doubled space at the join point,
 	// drop exactly one leading space from the right side (don't globally normalize whitespace).
 	if strings.HasSuffix(left, " ") && !strings.HasSuffix(left, "  ") && strings.HasPrefix(right, " ") {
@@ -1528,14 +1538,16 @@ func parseTaggedToolCall(inner string) (string, []byte, bool) {
 	}
 	closeInnerTag := "</" + name + ">"
 	closeInnerIdx := strings.LastIndex(trimmed, closeInnerTag)
-	if closeInnerIdx < 0 {
-		return "", nil, false
+	var argText string
+	if closeInnerIdx >= 0 {
+		argText = strings.TrimSpace(trimmed[nameEnd+1 : closeInnerIdx])
+	} else {
+		argText = strings.TrimSpace(trimmed[nameEnd+1:])
 	}
-	argText := strings.TrimSpace(trimmed[nameEnd+1 : closeInnerIdx])
 	if argText == "" {
 		return "", nil, false
 	}
-	argBytes, ok := parseTaggedToolArguments(argText)
+	argBytes, ok := parseTaggedToolArgumentsLoose(argText)
 	if !ok {
 		return "", nil, false
 	}
@@ -1545,28 +1557,95 @@ func parseTaggedToolCall(inner string) (string, []byte, bool) {
 func parseToolNameTaggedToolCall(inner string) (string, []byte, bool) {
 	trimmed := strings.TrimSpace(inner)
 	lower := strings.ToLower(trimmed)
-	const openTag = "<tool_name>"
 	const closeTag = "</tool_name>"
-	if !strings.HasPrefix(lower, openTag) {
+	openIdx := toolNameOpenTagRe.FindStringIndex(lower)
+	if openIdx == nil || openIdx[0] != 0 {
 		return "", nil, false
 	}
-	closeIdx := strings.Index(lower, closeTag)
-	if closeIdx < 0 {
+	rest := strings.TrimSpace(trimmed[openIdx[1]:])
+	if rest == "" {
 		return "", nil, false
 	}
-	name := strings.TrimSpace(trimmed[len(openTag):closeIdx])
+	closeIdx := strings.Index(strings.ToLower(rest), closeTag)
+	rawName := ""
+	argText := ""
+	if closeIdx >= 0 {
+		rawName = strings.TrimSpace(rest[:closeIdx])
+		argText = strings.TrimSpace(rest[closeIdx+len(closeTag):])
+	} else {
+		rawName, argText = splitLooseToolNameAndArgs(rest)
+	}
+	name := normalizeToolName(rawName)
 	if name == "" {
 		return "", nil, false
 	}
-	argText := strings.TrimSpace(trimmed[closeIdx+len(closeTag):])
 	if argText == "" {
 		return "", nil, false
 	}
-	argBytes, ok := parseTaggedToolArguments(argText)
+	argBytes, ok := parseTaggedToolArgumentsLoose(argText)
 	if !ok {
 		return "", nil, false
 	}
 	return name, argBytes, true
+}
+
+func parseTaggedToolArgumentsLoose(argText string) ([]byte, bool) {
+	trimmed := strings.TrimSpace(argText)
+	if trimmed == "" {
+		return nil, false
+	}
+	if argBytes, ok := parseTaggedToolArguments(trimmed); ok {
+		return argBytes, true
+	}
+	stripped := strings.TrimSpace(trailingCloseTagsRe.ReplaceAllString(trimmed, ""))
+	if stripped == "" || stripped == trimmed {
+		return nil, false
+	}
+	return parseTaggedToolArguments(stripped)
+}
+
+func splitLooseToolNameAndArgs(rest string) (string, string) {
+	trimmed := strings.TrimSpace(rest)
+	if trimmed == "" {
+		return "", ""
+	}
+	if idx := strings.Index(trimmed, "{"); idx >= 0 {
+		return strings.TrimSpace(trimmed[:idx]), strings.TrimSpace(trimmed[idx:])
+	}
+	if idx := strings.Index(trimmed, "<"); idx > 0 {
+		return strings.TrimSpace(trimmed[:idx]), strings.TrimSpace(trimmed[idx:])
+	}
+	return strings.TrimSpace(trimmed), ""
+}
+
+func normalizeToolName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ""
+	}
+	if idx := strings.Index(name, "<"); idx >= 0 {
+		name = strings.TrimSpace(name[:idx])
+	}
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return ""
+	}
+	name = strings.Trim(parts[0], `"'`)
+	if !toolNameTokenRe.MatchString(name) {
+		return ""
+	}
+	return name
+}
+
+func stripLeadingToolCallCloseTags(text string) string {
+	out := text
+	for {
+		loc := leadingToolCallCloseRe.FindStringIndex(out)
+		if loc == nil || loc[0] != 0 {
+			return out
+		}
+		out = out[loc[1]:]
+	}
 }
 
 func parseSelfClosingTaggedToolCall(inner string) (string, []byte, bool) {

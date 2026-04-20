@@ -924,6 +924,98 @@ func TestParseToolSentinelTagWrappedToolCallCompatibility(t *testing.T) {
 	})
 }
 
+func TestParseToolSentinelTagWrappedToolCallMalformedDelimitersCompatibility(t *testing.T) {
+	t.Run("extra closing tool_name", func(t *testing.T) {
+		text := `<tool_call><tool_name>Glob</tool_name>{"pattern":"*.md"}</tool_name></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Glob" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["pattern"] != "*.md" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("missing closing tool_name", func(t *testing.T) {
+		text := `<tool_call><tool_name>Glob{"pattern":"*.md"}</tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Glob" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["pattern"] != "*.md" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("extra closing tool_call", func(t *testing.T) {
+		text := `<tool_call><Read>{"file_path":"go.mod"}</Read></tool_call></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		if strings.TrimSpace(res.Content) != "" {
+			t.Fatalf("content=%q", res.Content)
+		}
+	})
+
+	t.Run("missing closing tool_call", func(t *testing.T) {
+		text := `<tool_call><Read>{"file_path":"go.mod"}</Read>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+	})
+
+	t.Run("mismatched inner closing tag", func(t *testing.T) {
+		text := `<tool_call><Read>{"file_path":"go.mod"}</tool_name></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["file_path"] != "go.mod" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("tool_call open tag with attributes or spaces", func(t *testing.T) {
+		text := `<tool_call data-kind="fn"   ><Read>{"file_path":"go.mod"}</Read></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+	})
+}
+
 func TestParseToolSentinelPlainTextDoesNotMisclassifyAsToolCall(t *testing.T) {
 	text := "normal assistant reply with <tool_call> marker words only"
 	res := ParseToolSentinel(text)
