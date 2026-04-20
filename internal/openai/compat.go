@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"io"
 	"math/rand"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -821,13 +822,17 @@ func normalizeAssistantHistoryContent(content string) string {
 
 	var rawNames []string
 	var foundRaw bool
-	current, rawNames, foundRaw = stripRawToolCallArtifacts(current)
+	strippedCurrent, strippedNames, foundRaw := stripRawToolCallArtifacts(current)
 	if foundRaw {
-		for _, name := range rawNames {
-			if strings.TrimSpace(name) == "" {
-				continue
+		if !toolCallRawDebugPreserveEnabled() {
+			current = strippedCurrent
+			rawNames = strippedNames
+			for _, name := range rawNames {
+				if strings.TrimSpace(name) == "" {
+					continue
+				}
+				toolCalls = append(toolCalls, ToolCall{Name: name})
 			}
-			toolCalls = append(toolCalls, ToolCall{Name: name})
 		}
 	}
 
@@ -836,6 +841,19 @@ func normalizeAssistantHistoryContent(content string) string {
 		return current
 	}
 	return summarizeAssistantToolCalls(toolCalls)
+}
+
+func toolCallRawDebugPreserveEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("PROXY_LOG_IO"))
+	if v == "" {
+		return false
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "y":
+		return true
+	default:
+		return false
+	}
 }
 
 func stripThinkingContent(content string) string {

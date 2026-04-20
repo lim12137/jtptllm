@@ -178,6 +178,26 @@ func TestNormalizeAssistantHistoryContentIdempotent(t *testing.T) {
 	}
 }
 
+func TestNormalizeAssistantHistoryContentMalformedToolCallStrippedInNormalMode(t *testing.T) {
+	t.Setenv("PROXY_LOG_IO", "")
+	src := `<tool_call><multi_tool_use.parallel>{"tool_uses":[}</multi_tool_use.parallel></tool_call>`
+	got := normalizeAssistantHistoryContent(src)
+	want := "assistant_tool_call: multi_tool_use.parallel"
+	if got != want {
+		t.Fatalf("got=%q want=%q", got, want)
+	}
+}
+
+func TestNormalizeAssistantHistoryContentMalformedToolCallPreservedInDebugMode(t *testing.T) {
+	t.Setenv("PROXY_LOG_IO", "1")
+	src := `<tool_call><multi_tool_use.parallel>{"tool_uses":[}</multi_tool_use.parallel></tool_call>`
+	got := normalizeAssistantHistoryContent(src)
+	want := src
+	if got != want {
+		t.Fatalf("got=%q want=%q", got, want)
+	}
+}
+
 func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
 	usage := ChatUsageFromCharCount("hi", "回应")
 	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {
