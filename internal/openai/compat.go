@@ -696,7 +696,7 @@ func BuildChatCompletionResponse(text string, model string) map[string]any {
 func BuildChatCompletionResponseFromText(text string, model string) map[string]any {
 	parsed := ParseToolSentinel(text)
 	content := strings.TrimSpace(parsed.Content)
-	if content == "" && len(parsed.ToolCalls) == 0 {
+	if content == "" && len(parsed.ToolCalls) == 0 && !parsed.NeedsRetry {
 		content = strings.TrimSpace(text)
 	}
 	if len(parsed.ToolCalls) == 0 {
@@ -761,7 +761,7 @@ func BuildResponsesResponse(text string, model string) map[string]any {
 func BuildResponsesResponseFromText(text string, model string) map[string]any {
 	parsed := ParseToolSentinel(text)
 	content := strings.TrimSpace(parsed.Content)
-	if content == "" && len(parsed.ToolCalls) == 0 {
+	if content == "" && len(parsed.ToolCalls) == 0 && !parsed.NeedsRetry {
 		content = strings.TrimSpace(text)
 	}
 	if len(parsed.ToolCalls) == 0 {
@@ -1478,13 +1478,16 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	if toolCallOpenTagRe.FindStringIndex(trimmed) == nil {
 		return ToolParseResult{Content: trimmed}
 	}
-	candidateCount, malformedFound, firstCall, firstStart, firstEnd, foundValid := scanTaggedToolCallCandidates(trimmed)
+	candidateCount, malformedFound, malformedArtifactFound, firstCall, firstStart, firstEnd, foundValid := scanTaggedToolCallCandidates(trimmed)
 	if malformedFound && candidateCount > 1 {
 		// Multiple candidates plus malformed block => treat this parse as invalid.
 		// Do not partially recover to avoid leaking ambiguous tool_call state.
-		return ToolParseResult{Content: trimmed, NeedsRetry: true}
+		return ToolParseResult{Content: sanitizeTaggedToolCallContent(trimmed), NeedsRetry: true}
 	}
 	if !foundValid {
+		if malformedArtifactFound {
+			return ToolParseResult{Content: sanitizeTaggedToolCallContent(trimmed), NeedsRetry: true}
+		}
 		return ToolParseResult{Content: trimmed}
 	}
 	content := removeTaggedToolCallBlock(trimmed, firstStart, firstEnd)
@@ -1494,9 +1497,10 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	}
 }
 
-func scanTaggedToolCallCandidates(text string) (int, bool, ToolCall, int, int, bool) {
+func scanTaggedToolCallCandidates(text string) (int, bool, bool, ToolCall, int, int, bool) {
 	candidateCount := 0
 	malformedFound := false
+	malformedArtifactFound := false
 	firstStart := -1
 	firstEnd := -1
 	var firstCall ToolCall
@@ -1531,6 +1535,9 @@ func scanTaggedToolCallCandidates(text string) (int, bool, ToolCall, int, int, b
 		}
 		if !ok {
 			malformedFound = true
+			if looksLikeMalformedToolCallArtifact(inner) {
+				malformedArtifactFound = true
+			}
 		}
 		if closeIdx == nil {
 			break
@@ -1538,7 +1545,36 @@ func scanTaggedToolCallCandidates(text string) (int, bool, ToolCall, int, int, b
 		cursor = blockEnd
 	}
 
-	return candidateCount, malformedFound, firstCall, firstStart, firstEnd, firstStart >= 0
+	return candidateCount, malformedFound, malformedArtifactFound, firstCall, firstStart, firstEnd, firstStart >= 0
+}
+
+func looksLikeMalformedToolCallArtifact(inner string) bool {
+	trimmed := strings.TrimSpace(inner)
+	if trimmed == "" {
+		return false
+	}
+	if openXMLTagRe.FindStringIndex(trimmed) != nil {
+		return true
+	}
+	if strings.Contains(trimmed, "{") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(trimmed), "tool_name")
+}
+
+func sanitizeTaggedToolCallContent(text string) string {
+	sanitized := toolCallTagBlockRe.ReplaceAllString(text, " ")
+	if openIdx := toolCallOpenTagRe.FindStringIndex(sanitized); openIdx != nil {
+		start := openIdx[0]
+		openEnd := openIdx[1]
+		if closeIdx := toolCallCloseTagRe.FindStringIndex(sanitized[openEnd:]); closeIdx != nil {
+			end := openEnd + closeIdx[1]
+			sanitized = sanitized[:start] + stripLeadingToolCallCloseTags(sanitized[end:])
+		} else {
+			sanitized = sanitized[:start]
+		}
+	}
+	return strings.TrimSpace(sanitized)
 }
 
 func removeTaggedToolCallBlock(text string, start int, end int) string {

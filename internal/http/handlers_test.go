@@ -512,6 +512,121 @@ func TestChatCompletionsNonStreamMalformedMultiToolCallRetriesAtMostOnce(t *test
 	}
 }
 
+func TestChatCompletionsNonStreamRetriesOnceOnSingleMalformedToolCallArtifact(t *testing.T) {
+	var prompts []string
+	callCount := 0
+	firstBad := "前置说明 <tool_call>\n<Agent\n{\n  \"description\": \"Explore repository structure\"\n}\n</Agent>\n</tool_call> 后置说明"
+	secondGood := "重试后返回正常文本"
+
+	gw := &stubGateway{
+		runHook: func(req gateway.RunRequest) (*http.Response, map[string]any, error) {
+			callCount++
+			prompts = append(prompts, req.Text)
+			text := firstBad
+			if callCount == 2 {
+				text = secondGood
+			}
+			return nil, map[string]any{
+				"data": map[string]any{
+					"message": map[string]any{"text": text},
+				},
+			}, nil
+		},
+	}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if callCount != 2 {
+		t.Fatalf("callCount=%d", callCount)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("prompts=%d", len(prompts))
+	}
+	if !strings.Contains(prompts[1], "本次 tool-call 格式不完整，已忽略，请重试，并且一次只调用一个 tool-call。") {
+		t.Fatalf("retry prompt missing hidden hint: %q", prompts[1])
+	}
+
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	choices, ok := out["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("choices empty")
+	}
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	content, _ := msg["content"].(string)
+	if strings.Contains(content, "<tool_call>") {
+		t.Fatalf("malformed tool-call leaked: %q", content)
+	}
+	if content != secondGood {
+		t.Fatalf("content=%q want=%q", content, secondGood)
+	}
+}
+
+func TestChatCompletionsNonStreamSingleMalformedToolCallRetriesAtMostOnceAndNoLeak(t *testing.T) {
+	callCount := 0
+	bad := "前置说明 <tool_call>\n<Agent\n{\n  \"description\": \"Explore repository structure\"\n}\n</Agent>\n</tool_call> 后置说明"
+
+	gw := &stubGateway{
+		runHook: func(req gateway.RunRequest) (*http.Response, map[string]any, error) {
+			callCount++
+			return nil, map[string]any{
+				"data": map[string]any{
+					"message": map[string]any{"text": bad},
+				},
+			}, nil
+		},
+	}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if callCount != 2 {
+		t.Fatalf("callCount=%d want=2", callCount)
+	}
+
+	var out map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	choices, ok := out["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("choices empty")
+	}
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	content, _ := msg["content"].(string)
+	if strings.Contains(content, "<tool_call>") {
+		t.Fatalf("malformed tool-call leaked: %q", content)
+	}
+	if strings.Contains(content, "本次 tool-call 格式不完整") {
+		t.Fatalf("hidden prompt leaked: %q", content)
+	}
+}
+
 func TestChatCompletionsToolPromptUsesXMLProtocol(t *testing.T) {
 	gw := &stubGateway{runResp: map[string]any{
 		"success": true,

@@ -1068,6 +1068,73 @@ func TestParseToolSentinelTagWrappedToolCallMalformedDelimitersCompatibility(t *
 			t.Fatalf("args=%v", args)
 		}
 	})
+
+	t.Run("xml args command description mismatched close", func(t *testing.T) {
+		text := `<tool_call><Bash><command>ls -la</command><description>List all files and directories in the current directory</command></Bash></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Bash" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["command"] != "ls -la" {
+			t.Fatalf("args=%v", args)
+		}
+		if args["description"] != "List all files and directories in the current directory" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+}
+
+func TestParseToolSentinelSingleMalformedTaggedArtifactNeedsRetry(t *testing.T) {
+	text := "前置说明 <tool_call>\n<Agent\n{\n  \"description\": \"Explore repository structure\"\n}\n</Agent>\n</tool_call> 后置说明"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 0 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if !res.NeedsRetry {
+		t.Fatalf("needsRetry=false")
+	}
+	if strings.Contains(res.Content, "<tool_call>") {
+		t.Fatalf("content leaked tool_call tag: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "前置说明") || !strings.Contains(res.Content, "后置说明") {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
+func TestBuildChatCompletionResponseFromTextSingleMalformedTaggedArtifactNoLeak(t *testing.T) {
+	text := "前置说明 <tool_call>\n<Agent\n{\n  \"description\": \"Explore repository structure\"\n}\n</Agent>\n</tool_call> 后置说明"
+	out := BuildChatCompletionResponseFromText(text, "agent")
+	choices, ok := out["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("choices empty")
+	}
+	msg, _ := choices[0].(map[string]any)["message"].(map[string]any)
+	content, _ := msg["content"].(string)
+	if strings.Contains(content, "<tool_call>") {
+		t.Fatalf("content leaked malformed tool_call: %q", content)
+	}
+	if content == "" {
+		t.Fatalf("content should keep non-tool text")
+	}
+}
+
+func TestBuildResponsesResponseFromTextSingleMalformedTaggedArtifactNoLeak(t *testing.T) {
+	text := "前置说明 <tool_call>\n<Agent\n{\n  \"description\": \"Explore repository structure\"\n}\n</Agent>\n</tool_call> 后置说明"
+	out := BuildResponsesResponseFromText(text, "agent")
+	content, _ := out["output_text"].(string)
+	if strings.Contains(content, "<tool_call>") {
+		t.Fatalf("output_text leaked malformed tool_call: %q", content)
+	}
+	if content == "" {
+		t.Fatalf("output_text should keep non-tool text")
+	}
 }
 
 func TestParseToolSentinelPlainTextDoesNotMisclassifyAsToolCall(t *testing.T) {
@@ -1118,8 +1185,14 @@ func TestParseToolSentinelMalformedTagWrappedToolCallFallsBackToText(t *testing.
 	if len(res.ToolCalls) != 0 {
 		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
 	}
-	if res.Content != strings.TrimSpace(text) {
+	if strings.Contains(res.Content, "<tool_call>") {
+		t.Fatalf("content leaked tool_call tag: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "prefix") || !strings.Contains(res.Content, "suffix") {
 		t.Fatalf("content=%q", res.Content)
+	}
+	if !res.NeedsRetry {
+		t.Fatalf("needsRetry=false")
 	}
 }
 
@@ -1129,7 +1202,10 @@ func TestParseToolSentinelMalformedTagWrappedToolCallInvalidatesMixedCandidates(
 	if len(res.ToolCalls) != 0 {
 		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
 	}
-	if strings.TrimSpace(res.Content) != strings.TrimSpace(text) {
+	if strings.Contains(res.Content, "<tool_call>") {
+		t.Fatalf("content leaked tool_call tag: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "prefix") || !strings.Contains(res.Content, "mid") || !strings.Contains(res.Content, "suffix") {
 		t.Fatalf("content=%q", res.Content)
 	}
 	if !res.NeedsRetry {
@@ -1143,7 +1219,10 @@ func TestParseToolSentinelMalformedTagWrappedToolCallInvalidatesEvenWhenFirstIsV
 	if len(res.ToolCalls) != 0 {
 		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
 	}
-	if strings.TrimSpace(res.Content) != strings.TrimSpace(text) {
+	if strings.Contains(res.Content, "<tool_call>") {
+		t.Fatalf("content leaked tool_call tag: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "start") || !strings.Contains(res.Content, "then") || !strings.Contains(res.Content, "end") {
 		t.Fatalf("content=%q", res.Content)
 	}
 	if !res.NeedsRetry {
