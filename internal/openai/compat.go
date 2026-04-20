@@ -626,7 +626,8 @@ func max(a int, b int) int {
 	return b
 }
 
-func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
+// ChatUsageFromHeuristicFallback estimates chat usage when upstream usage is missing.
+func ChatUsageFromHeuristicFallback(prompt string, completion string) map[string]any {
 	p := estimateChatPromptTokens(prompt)
 	c := estimateTextTokens(completion)
 	return map[string]any{
@@ -636,8 +637,13 @@ func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
 	}
 }
 
-// ResponsesUsageFromCharCount is a lightweight fallback when upstream usage is missing.
-func ResponsesUsageFromCharCount(input string, output string) map[string]any {
+// ChatUsageFromCharCount is kept as a compatibility wrapper around the heuristic fallback estimator.
+func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
+	return ChatUsageFromHeuristicFallback(prompt, completion)
+}
+
+// ResponsesUsageFromHeuristicFallback estimates responses usage when upstream usage is missing.
+func ResponsesUsageFromHeuristicFallback(input string, output string) map[string]any {
 	in := estimateTextTokens(input)
 	out := estimateTextTokens(output)
 	return map[string]any{
@@ -645,6 +651,11 @@ func ResponsesUsageFromCharCount(input string, output string) map[string]any {
 		"output_tokens": out,
 		"total_tokens":  in + out,
 	}
+}
+
+// ResponsesUsageFromCharCount is kept as a compatibility wrapper around the heuristic fallback estimator.
+func ResponsesUsageFromCharCount(input string, output string) map[string]any {
+	return ResponsesUsageFromHeuristicFallback(input, output)
 }
 
 func BuildChatCompletionResponse(text string, model string) map[string]any {

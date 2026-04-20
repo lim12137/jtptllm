@@ -239,7 +239,7 @@ func TestChatCompletionsNonStreamPassesThroughUsage(t *testing.T) {
 	}
 }
 
-func TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
+func TestChatCompletionsNonStreamFallsBackToHeuristicUsageWhenMissing(t *testing.T) {
 	gw := &stubGateway{runResp: map[string]any{
 		"success": true,
 		"data": map[string]any{
@@ -519,7 +519,7 @@ func TestResponsesNonStreamPassesThroughUsage(t *testing.T) {
 	}
 }
 
-func TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
+func TestResponsesNonStreamFallsBackToHeuristicUsageWhenMissing(t *testing.T) {
 	gw := &stubGateway{runResp: map[string]any{
 		"success": true,
 		"data": map[string]any{
@@ -1067,7 +1067,7 @@ func TestChatCompletionsStreamPassesThroughUsage(t *testing.T) {
 	}
 }
 
-func TestChatCompletionsStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
+func TestChatCompletionsStreamFallsBackToHeuristicUsageWhenMissing(t *testing.T) {
 	evt := map[string]any{
 		"data": map[string]any{
 			"message": map[string]any{"text": "hello"},
@@ -1351,7 +1351,7 @@ func TestResponsesStreamPassesThroughUsage(t *testing.T) {
 	}
 }
 
-func TestResponsesStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
+func TestResponsesStreamFallsBackToHeuristicUsageWhenMissing(t *testing.T) {
 	evt := map[string]any{
 		"data": map[string]any{
 			"message": map[string]any{"text": "hello"},
