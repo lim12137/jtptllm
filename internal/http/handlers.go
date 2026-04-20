@@ -228,12 +228,17 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			return
 		}
 		defer resp.Body.Close()
-		streamText, err := collectStreamText(resp.Body)
+		streamText, rawUsage, err := collectStreamTextWithUsage(resp.Body)
 		if err != nil {
 			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"error": err.Error()})
 			return
 		}
 		respPayload := openai.BuildChatCompletionResponseFromText(streamText, parsed.Model)
+		usage := openai.NormalizeChatUsage(rawUsage)
+		if usage == nil {
+			usage = openai.ChatUsageFromCharCount(parsed.Prompt, streamText)
+		}
+		respPayload["usage"] = usage
 		logIO(map[string]any{
 			"dir":           "out",
 			"path":          r.URL.Path,
@@ -261,7 +266,7 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	defer resp.Body.Close()
-	streamOutput, err := collectStreamText(resp.Body)
+	streamOutput, rawUsage, err := collectStreamTextWithUsage(resp.Body)
 	if err != nil {
 		log.Printf("stream chat completions error: %v", err)
 		return
@@ -271,6 +276,11 @@ func (s *Server) handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	if len(parsedTool.ToolCalls) > 0 {
 		respPayload = openai.BuildChatCompletionResponseFromText(streamOutput, parsed.Model)
 	}
+	usage := openai.NormalizeChatUsage(rawUsage)
+	if usage == nil {
+		usage = openai.ChatUsageFromCharCount(parsed.Prompt, streamOutput)
+	}
+	respPayload["usage"] = usage
 	if err := streamChatCompletionFromResponse(w, respPayload); err != nil {
 		log.Printf("stream chat completions error: %v", err)
 		return
@@ -760,7 +770,7 @@ func extractTextFromContentObj(content map[string]any) string {
 	return ""
 }
 
-func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string) (string, error) {
+func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string, usage map[string]any) (string, error) {
 	flusher, ok := w.(stdhttp.Flusher)
 	if !ok {
 		return "", errors.New("streaming not supported")
@@ -808,6 +818,9 @@ func streamChatCompletion(w stdhttp.ResponseWriter, body io.Reader, model string
 		"model":   model,
 		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
 	}
+	if usage != nil {
+		final["usage"] = usage
+	}
 	if _, err := io.WriteString(w, sseData(final)); err != nil {
 		return full.String(), err
 	}
@@ -840,6 +853,7 @@ func streamChatCompletionFromResponse(w stdhttp.ResponseWriter, resp map[string]
 	} else if v, ok := resp["created"].(int64); ok {
 		created = v
 	}
+	usage, _ := resp["usage"].(map[string]any)
 
 	msg := firstChoiceMessage(resp)
 	if msg == nil {
@@ -880,6 +894,9 @@ func streamChatCompletionFromResponse(w stdhttp.ResponseWriter, resp map[string]
 			"model":   model,
 			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"}},
 		}
+		if usage != nil {
+			final["usage"] = usage
+		}
 		if _, err := io.WriteString(w, sseData(final)); err != nil {
 			return err
 		}
@@ -892,10 +909,31 @@ func streamChatCompletionFromResponse(w stdhttp.ResponseWriter, resp map[string]
 
 	content := stringValue(msg["content"])
 	lines := openai.IterChatCompletionSSE([]string{content}, model, id)
+	if usage != nil && len(lines) >= 2 {
+		lines = lines[:len(lines)-2]
+	}
 	for _, line := range lines {
 		if _, err := io.WriteString(w, line); err != nil {
 			return err
 		}
+	}
+	if usage != nil && len(lines) >= 2 {
+		final := map[string]any{
+			"id":      id,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   model,
+			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+			"usage":   usage,
+		}
+		if _, err := io.WriteString(w, sseData(final)); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
 	}
 	flusher.Flush()
 	return nil
@@ -1172,6 +1210,18 @@ func collectStreamText(body io.Reader) (string, error) {
 		return full.String(), err
 	}
 	return full.String(), nil
+}
+
+func collectStreamTextWithUsage(body io.Reader) (string, map[string]any, error) {
+	var full strings.Builder
+	rawUsage, err := streamGatewayDeltasWithUsage(body, func(delta string) error {
+		full.WriteString(delta)
+		return nil
+	})
+	if err != nil {
+		return full.String(), rawUsage, err
+	}
+	return full.String(), rawUsage, nil
 }
 
 func streamGatewayDeltas(body io.Reader, emit func(string) error) error {

@@ -928,6 +928,31 @@ type sseEventRecord struct {
 	Data  map[string]any
 }
 
+func parseChatCompletionChunks(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	var chunks []map[string]any
+	for scanner.Scan() {
+		line := strings.TrimSpace(strings.TrimRight(scanner.Text(), "\r"))
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			t.Fatalf("bad chat sse json: %v payload=%q", err, payload)
+		}
+		chunks = append(chunks, chunk)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan chat sse: %v", err)
+	}
+	return chunks
+}
+
 func parseSSEEvents(t *testing.T, body string) []sseEventRecord {
 	t.Helper()
 	scanner := bufio.NewScanner(strings.NewReader(body))
@@ -982,6 +1007,112 @@ func eventsByType(evts []sseEventRecord, typ string) []sseEventRecord {
 		}
 	}
 	return out
+}
+
+func TestChatCompletionsStreamPassesThroughUsage(t *testing.T) {
+	evt := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{"text": "hello"},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	end, _ := json.Marshal(map[string]any{
+		"end": true,
+		"usage": map[string]any{
+			"prompt_tokens":     9,
+			"completion_tokens": 8,
+			"total_tokens":      17,
+		},
+	})
+	sse := "data: " + string(b) + "\n\n" +
+		"data: " + string(end) + "\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(bodyBytes))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "[DONE]") {
+		t.Fatalf("missing DONE marker: %s", rec.Body.String())
+	}
+
+	chunks := parseChatCompletionChunks(t, rec.Body.String())
+	if len(chunks) == 0 {
+		t.Fatalf("missing chat chunks: %s", rec.Body.String())
+	}
+	final := chunks[len(chunks)-1]
+	usage, ok := final["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing usage on final chunk: %v", final)
+	}
+	if usage["prompt_tokens"] != float64(9) || usage["completion_tokens"] != float64(8) || usage["total_tokens"] != float64(17) {
+		t.Fatalf("usage=%v", usage)
+	}
+}
+
+func TestChatCompletionsStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
+	evt := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{"text": "hello"},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	end, _ := json.Marshal(map[string]any{"end": true})
+	sse := "data: " + string(b) + "\n\n" +
+		"data: " + string(end) + "\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(bodyBytes))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	chunks := parseChatCompletionChunks(t, rec.Body.String())
+	if len(chunks) == 0 {
+		t.Fatalf("missing chat chunks: %s", rec.Body.String())
+	}
+	final := chunks[len(chunks)-1]
+	usage, ok := final["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing usage on final chunk: %v", final)
+	}
+	// prompt is "user: hi" (8 runes), completion is "hello" (5 runes), with fallback K=2.
+	if usage["prompt_tokens"] != float64(16) || usage["completion_tokens"] != float64(10) || usage["total_tokens"] != float64(26) {
+		t.Fatalf("usage=%v", usage)
+	}
 }
 
 func TestResponsesStreamConformsToResponseEvents(t *testing.T) {
