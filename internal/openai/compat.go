@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -329,17 +330,289 @@ func injectModelMarker(model string, prompt string) string {
 	return "**model = " + m + "**\n" + cleaned
 }
 
-// ChatUsageFromCharCount is a lightweight fallback when upstream usage is missing.
-// It intentionally counts Unicode code points (runes) rather than bytes.
-const usageFallbackRuneMultiplier = 2
+type tokenEstimateStats struct {
+	cjkCount          int
+	asciiLetterCount  int
+	digitCount        int
+	whitespaceCount   int
+	punctCount        int
+	jsonSyntaxCount   int
+	xmlSyntaxCount    int
+	newlineCount      int
+	wordCount         int
+	longWordCount     int
+	roleLineCount     int
+	modelMarkerCount  int
+	toolPrefixSignals int
+}
 
-func scaledRuneCountForUsage(s string) int {
-	return utf8.RuneCountInString(s) * usageFallbackRuneMultiplier
+const (
+	minNonEmptyTokenEstimate = 1
+	cjkTokenWeight           = 1
+	asciiWordWeight          = 1
+	asciiLongWordExtra       = 2
+	digitTokenWeight         = 1
+	punctTokenWeight         = 1
+	structureTokenWeight     = 2
+	newlineTokenWeight       = 2
+	shortTextBaseWeight      = 2
+	roleLineOverheadWeight   = 1
+	modelMarkerOverhead      = 1
+	toolPrefixOverhead       = 2
+
+	longWordThreshold       = 7
+	shortProseWordThreshold = 8
+	shortCJKThreshold       = 6
+	cjkCompressionThreshold = 16
+	cjkCompressionDivisor   = 4
+	mixedScriptOverhead     = 4
+	structuredWordThreshold = 8
+)
+
+func collectTokenEstimateStats(text string) tokenEstimateStats {
+	var stats tokenEstimateStats
+	if text == "" {
+		return stats
+	}
+
+	inASCIIWord := false
+	currentWordLen := 0
+	finalizeWord := func() {
+		if !inASCIIWord {
+			return
+		}
+		stats.wordCount++
+		if currentWordLen >= longWordThreshold {
+			stats.longWordCount++
+		}
+		inASCIIWord = false
+		currentWordLen = 0
+	}
+
+	for _, r := range text {
+		switch r {
+		case '\n':
+			finalizeWord()
+			stats.newlineCount++
+			stats.whitespaceCount++
+			continue
+		case '\r', '\t', ' ':
+			finalizeWord()
+			stats.whitespaceCount++
+			continue
+		}
+
+		if isJSONSyntaxRune(r) {
+			finalizeWord()
+			stats.jsonSyntaxCount++
+			continue
+		}
+		if isXMLSyntaxRune(r) {
+			finalizeWord()
+			stats.xmlSyntaxCount++
+			continue
+		}
+		if isCJKTokenRune(r) {
+			finalizeWord()
+			stats.cjkCount++
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			finalizeWord()
+			stats.digitCount++
+			continue
+		}
+		if isASCIIWordRune(r) {
+			inASCIIWord = true
+			currentWordLen++
+			stats.asciiLetterCount++
+			continue
+		}
+		if unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			finalizeWord()
+			stats.punctCount++
+			continue
+		}
+
+		finalizeWord()
+	}
+	finalizeWord()
+
+	lowerText := strings.ToLower(text)
+	for _, line := range strings.Split(lowerText, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "system:"),
+			strings.HasPrefix(trimmed, "user:"),
+			strings.HasPrefix(trimmed, "assistant:"),
+			strings.HasPrefix(trimmed, "tool:"):
+			stats.roleLineCount++
+		}
+		if strings.HasPrefix(trimmed, "**model = ") {
+			stats.modelMarkerCount++
+		}
+	}
+
+	for _, needle := range []string{
+		"<tool_call>",
+		"</tool_call>",
+		"<tool_name>",
+		"tc_protocol",
+		"tool_choice",
+		"\"tools\"",
+		"assistant_tool_call:",
+	} {
+		if strings.Contains(lowerText, needle) {
+			stats.toolPrefixSignals++
+		}
+	}
+
+	return stats
+}
+
+func isASCIIWordRune(r rune) bool {
+	return r < utf8.RuneSelf && (unicode.IsLetter(r) || r == '_')
+}
+
+func isCJKTokenRune(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul)
+}
+
+func isJSONSyntaxRune(r rune) bool {
+	switch r {
+	case '{', '}', '[', ']', '"', ':', ',', '\\':
+		return true
+	default:
+		return false
+	}
+}
+
+func isXMLSyntaxRune(r rune) bool {
+	switch r {
+	case '<', '>', '/', '=':
+		return true
+	default:
+		return false
+	}
+}
+
+func estimateTextTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+
+	stats := collectTokenEstimateStats(text)
+	score := 0
+	structureCount := stats.jsonSyntaxCount + stats.xmlSyntaxCount
+	jsonHeavy := stats.jsonSyntaxCount >= 10
+	xmlHeavy := stats.xmlSyntaxCount >= 8
+	codeLike := stats.newlineCount > 0 && structureCount >= 6
+	structuredText := jsonHeavy || xmlHeavy || stats.toolPrefixSignals > 0
+
+	if stats.cjkCount > 0 {
+		cjkScore := stats.cjkCount * cjkTokenWeight
+		if stats.cjkCount > cjkCompressionThreshold {
+			cjkScore -= (stats.cjkCount - cjkCompressionThreshold) / cjkCompressionDivisor
+		}
+		if stats.cjkCount <= shortCJKThreshold {
+			cjkScore += shortTextBaseWeight
+		}
+		score += cjkScore
+	}
+
+	score += stats.wordCount * asciiWordWeight
+	score += stats.longWordCount / asciiLongWordExtra
+
+	if stats.digitCount > 0 {
+		if !(stats.wordCount > 0 && stats.digitCount == 1 && !structuredText && !codeLike) {
+			score += max(1, stats.digitCount/digitTokenWeight)
+		}
+	}
+	if stats.punctCount > 0 && (stats.wordCount > 0 || structuredText || codeLike) {
+		punctContribution := stats.punctCount * punctTokenWeight
+		score += punctContribution
+	}
+	if stats.newlineCount > 0 {
+		score += stats.newlineCount * newlineTokenWeight
+	}
+
+	if structuredText || codeLike {
+		score += ceilDiv(structureCount, structureTokenWeight)
+		if structuredText {
+			score++
+		}
+		if jsonHeavy {
+			score++
+			if stats.wordCount >= structuredWordThreshold {
+				score += 2
+			}
+		}
+		if xmlHeavy {
+			score += 4
+		}
+		if stats.xmlSyntaxCount > 0 && stats.toolPrefixSignals > 0 {
+			score += stats.toolPrefixSignals * toolPrefixOverhead
+		}
+	}
+
+	if stats.wordCount > 0 && stats.cjkCount == 0 && !structuredText && !codeLike {
+		if stats.wordCount <= shortProseWordThreshold {
+			score += shortTextBaseWeight
+		} else {
+			score++
+		}
+	}
+	if stats.wordCount > shortProseWordThreshold && stats.roleLineCount == 0 && stats.punctCount > 0 && !structuredText && !codeLike {
+		score++
+	}
+
+	if stats.wordCount > 0 && stats.cjkCount > 0 {
+		score += mixedScriptOverhead
+	}
+	if stats.roleLineCount > 0 {
+		score += stats.roleLineCount
+	}
+	if stats.roleLineCount >= 3 {
+		score++
+	}
+
+	if score < minNonEmptyTokenEstimate {
+		return minNonEmptyTokenEstimate
+	}
+	return score
+}
+
+func estimateChatPromptTokens(prompt string) int {
+	if prompt == "" {
+		return 0
+	}
+	stats := collectTokenEstimateStats(prompt)
+	score := estimateTextTokens(prompt)
+	score += stats.roleLineCount * roleLineOverheadWeight
+	score += stats.modelMarkerCount * modelMarkerOverhead
+	if score < minNonEmptyTokenEstimate {
+		return minNonEmptyTokenEstimate
+	}
+	return score
+}
+
+func ceilDiv(n int, d int) int {
+	if n <= 0 || d <= 0 {
+		return 0
+	}
+	return (n + d - 1) / d
+}
+
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
-	p := scaledRuneCountForUsage(prompt)
-	c := scaledRuneCountForUsage(completion)
+	p := estimateChatPromptTokens(prompt)
+	c := estimateTextTokens(completion)
 	return map[string]any{
 		"prompt_tokens":     p,
 		"completion_tokens": c,
@@ -348,10 +621,9 @@ func ChatUsageFromCharCount(prompt string, completion string) map[string]any {
 }
 
 // ResponsesUsageFromCharCount is a lightweight fallback when upstream usage is missing.
-// It intentionally counts Unicode code points (runes) rather than bytes.
 func ResponsesUsageFromCharCount(input string, output string) map[string]any {
-	in := scaledRuneCountForUsage(input)
-	out := scaledRuneCountForUsage(output)
+	in := estimateTextTokens(input)
+	out := estimateTextTokens(output)
 	return map[string]any{
 		"input_tokens":  in,
 		"output_tokens": out,
