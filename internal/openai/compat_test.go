@@ -249,16 +249,104 @@ func TestPromptFromChatNormalizesCodebuddyAgentArtifactToToolSummary(t *testing.
 	}
 }
 
-func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
-	usage := ChatUsageFromCharCount("hi", "回应")
-	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {
+func TestEstimateTextTokensFixtures(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want int
+	}{
+		{
+			name: "english short sentence",
+			text: "Write a concise summary of this API response.",
+			want: 12,
+		},
+		{
+			name: "english long sentence",
+			text: "Summarize the response headers, status code, and body in a compact table for the incident report.",
+			want: 21,
+		},
+		{
+			name: "chinese short sentence",
+			text: "请总结这个接口返回的数据结构。",
+			want: 14,
+		},
+		{
+			name: "chinese long sentence",
+			text: "请根据返回结果，提炼字段含义、错误码差异以及下一步排查建议，并输出给值班同事。",
+			want: 31,
+		},
+		{
+			name: "mixed chinese and english",
+			text: "请 summarize 这个 API response，并指出 error code 处理方式。",
+			want: 22,
+		},
+		{
+			name: "json payload",
+			text: "{\"tool\":\"search\",\"args\":{\"query\":\"weather\",\"days\":3,\"city\":\"shanghai\"}}",
+			want: 28,
+		},
+		{
+			name: "code snippet",
+			text: "if err != nil {\n\treturn fmt.Errorf(\"wrap: %w\", err)\n}\n",
+			want: 24,
+		},
+		{
+			name: "xml tool schema",
+			text: "<tool_call><search>{\"query\":\"weather tomorrow\"}</search></tool_call>",
+			want: 27,
+		},
+		{
+			name: "chat style multiline prompt",
+			text: "system: follow the schema strictly\nuser: summarize the payload\nassistant: acknowledged",
+			want: 22,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := estimateTextTokens(tc.text)
+			if got != tc.want {
+				t.Fatalf("estimateTextTokens(%q)=%d want %d", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEstimateChatPromptTokensAddsRoleOverhead(t *testing.T) {
+	prompt := "system: follow the schema strictly\nuser: hi"
+	base := estimateTextTokens(prompt)
+	got := estimateChatPromptTokens(prompt)
+	if got <= base {
+		t.Fatalf("chat prompt estimate=%d base=%d", got, base)
+	}
+}
+
+func TestEstimateChatPromptTokensAddsToolPrefixOverhead(t *testing.T) {
+	prompt := "system: You have tools available.\n<tool_call>{\"name\":\"search\"}</tool_call>\nuser: hi"
+	plain := estimateChatPromptTokens("user: hi")
+	got := estimateChatPromptTokens(prompt)
+	if got <= plain {
+		t.Fatalf("tool prompt estimate=%d plain=%d", got, plain)
+	}
+}
+
+func TestChatUsageFromCharCountUsesHeuristicEstimator(t *testing.T) {
+	usage := ChatUsageFromCharCount("system: follow the schema strictly\nuser: hi", "已整理完成。")
+	if usage["prompt_tokens"] != 15 || usage["completion_tokens"] != 7 || usage["total_tokens"] != 22 {
 		t.Fatalf("usage=%v", usage)
 	}
 }
 
-func TestResponsesUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
-	usage := ResponsesUsageFromCharCount("你好", "abc")
-	if usage["input_tokens"] != 4 || usage["output_tokens"] != 6 || usage["total_tokens"] != 10 {
+func TestResponsesUsageFromCharCountUsesHeuristicEstimator(t *testing.T) {
+	usage := ResponsesUsageFromCharCount("{\"tool\":\"search\",\"args\":{\"query\":\"weather\",\"days\":3}}", "Found 3 weather updates for tomorrow.")
+	if usage["input_tokens"] != 20 || usage["output_tokens"] != 9 || usage["total_tokens"] != 29 {
+		t.Fatalf("usage=%v", usage)
+	}
+}
+
+func TestResponsesUsageFromCharCountHandlesEmptyStrings(t *testing.T) {
+	usage := ResponsesUsageFromCharCount("", "")
+	if usage["input_tokens"] != 0 || usage["output_tokens"] != 0 || usage["total_tokens"] != 0 {
 		t.Fatalf("usage=%v", usage)
 	}
 }
