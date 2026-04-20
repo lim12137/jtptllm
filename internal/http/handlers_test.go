@@ -956,6 +956,51 @@ func TestChatCompletionsStreamFallbackDetectsXMLTagToolCallWithoutTools(t *testi
 	}
 }
 
+func TestChatCompletionsStreamFallbackDetectsMalformedXMLArgTagsWithoutTools(t *testing.T) {
+	streamText := "<tool_call>\n<Read>\n<file_path>go.mod</file_path>\n</file_path>\n</Read>\n</tool_call>"
+	evt := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{"text": streamText},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	sse := "data: " + string(b) + "\n\n" +
+		"data: [DONE]\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":    "agent",
+		"stream":   true,
+		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	bodyText := rec.Body.String()
+	if !strings.Contains(bodyText, "\"tool_calls\"") {
+		t.Fatalf("missing tool_calls: %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "\"finish_reason\":\"tool_calls\"") {
+		t.Fatalf("missing tool_calls finish reason: %s", bodyText)
+	}
+	if strings.Contains(bodyText, "\\u003ctool_call\\u003e") {
+		t.Fatalf("tool-call XML tag leaked as text delta: %s", bodyText)
+	}
+}
+
 func TestChatCompletionsStreamFallbackKeepsPlainTextWithoutTools(t *testing.T) {
 	evt := map[string]any{
 		"data": map[string]any{

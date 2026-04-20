@@ -1014,6 +1014,60 @@ func TestParseToolSentinelTagWrappedToolCallMalformedDelimitersCompatibility(t *
 			t.Fatalf("name=%q", res.ToolCalls[0].Name)
 		}
 	})
+
+	t.Run("xml args extra closing subtag", func(t *testing.T) {
+		text := `<tool_call><Read><file_path>go.mod</file_path></file_path></Read></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["file_path"] != "go.mod" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("xml args missing closing subtag", func(t *testing.T) {
+		text := `<tool_call><Read><file_path>go.mod</Read></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["file_path"] != "go.mod" {
+			t.Fatalf("args=%v", args)
+		}
+	})
+
+	t.Run("xml args mismatched closing subtag", func(t *testing.T) {
+		text := `<tool_call><Read><file_path>go.mod</pattern></Read></tool_call>`
+		res := ParseToolSentinel(text)
+		if len(res.ToolCalls) != 1 {
+			t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+		}
+		if res.ToolCalls[0].Name != "Read" {
+			t.Fatalf("name=%q", res.ToolCalls[0].Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+			t.Fatalf("bad args json: %v", err)
+		}
+		if args["file_path"] != "go.mod" {
+			t.Fatalf("args=%v", args)
+		}
+	})
 }
 
 func TestParseToolSentinelPlainTextDoesNotMisclassifyAsToolCall(t *testing.T) {

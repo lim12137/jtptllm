@@ -26,6 +26,7 @@ var (
 	toolNameValueRe        = regexp.MustCompile(`(?is)<tool_name>\s*([^<]+?)\s*</tool_name>`)
 	toolNameOpenTagRe      = regexp.MustCompile(`(?is)^<tool_name\b[^>]*>`)
 	trailingCloseTagsRe    = regexp.MustCompile(`(?is)(?:\s*</[A-Za-z0-9_.:-]+\s*>)+\s*$`)
+	openXMLTagRe           = regexp.MustCompile(`(?is)<([A-Za-z0-9_.:-]+)\b[^>]*>`)
 	toolNameTokenRe        = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	jsonToolNRe            = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
 	jsonToolNameRe         = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
@@ -1656,11 +1657,60 @@ func parseTaggedToolArgumentsLoose(argText string) ([]byte, bool) {
 	if argBytes, ok := parseTaggedToolArguments(trimmed); ok {
 		return argBytes, true
 	}
+	if argBytes, ok := parseMalformedXMLArgsLoose(trimmed); ok {
+		return argBytes, true
+	}
 	stripped := strings.TrimSpace(trailingCloseTagsRe.ReplaceAllString(trimmed, ""))
 	if stripped == "" || stripped == trimmed {
 		return nil, false
 	}
-	return parseTaggedToolArguments(stripped)
+	if argBytes, ok := parseTaggedToolArguments(stripped); ok {
+		return argBytes, true
+	}
+	return parseMalformedXMLArgsLoose(stripped)
+}
+
+func parseMalformedXMLArgsLoose(argText string) ([]byte, bool) {
+	matches := openXMLTagRe.FindAllStringSubmatchIndex(argText, -1)
+	if len(matches) == 0 {
+		return nil, false
+	}
+
+	args := map[string]any{}
+	for _, m := range matches {
+		if len(m) < 4 {
+			continue
+		}
+		key := strings.TrimSpace(argText[m[2]:m[3]])
+		if key == "" {
+			continue
+		}
+
+		valueStart := m[1]
+		if valueStart >= len(argText) {
+			continue
+		}
+		rest := argText[valueStart:]
+		nextTag := strings.Index(rest, "<")
+		value := rest
+		if nextTag >= 0 {
+			value = rest[:nextTag]
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		mergeXMLToolArg(args, key, value)
+	}
+
+	if len(args) == 0 {
+		return nil, false
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return nil, false
+	}
+	return b, true
 }
 
 func splitLooseToolNameAndArgs(rest string) (string, string) {
