@@ -273,8 +273,8 @@ func TestChatCompletionsNonStreamFallsBackToCharCountUsageWhenMissing(t *testing
 	if !ok {
 		t.Fatalf("missing usage: %v", out["usage"])
 	}
-	// prompt is "user: hi" (8 runes), completion is "智能体输出文本" (7 runes), with fallback K=2.
-	if usage["prompt_tokens"] != float64(16) || usage["completion_tokens"] != float64(14) || usage["total_tokens"] != float64(30) {
+	// prompt and completion fallback usage now comes from the heuristic estimator.
+	if usage["prompt_tokens"] != float64(6) || usage["completion_tokens"] != float64(7) || usage["total_tokens"] != float64(13) {
 		t.Fatalf("usage=%v", usage)
 	}
 }
@@ -553,8 +553,8 @@ func TestResponsesNonStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing usage: %v", out["usage"])
 	}
-	// input is "hi" (2 runes), output is "回应" (2 runes), with fallback K=2.
-	if usage["input_tokens"] != float64(4) || usage["output_tokens"] != float64(4) || usage["total_tokens"] != float64(8) {
+	// input and output fallback usage now comes from the heuristic estimator.
+	if usage["input_tokens"] != float64(3) || usage["output_tokens"] != float64(4) || usage["total_tokens"] != float64(7) {
 		t.Fatalf("usage=%v", usage)
 	}
 }
@@ -1109,8 +1109,8 @@ func TestChatCompletionsStreamFallsBackToCharCountUsageWhenMissing(t *testing.T)
 	if !ok {
 		t.Fatalf("missing usage on final chunk: %v", final)
 	}
-	// prompt is "user: hi" (8 runes), completion is "hello" (5 runes), with fallback K=2.
-	if usage["prompt_tokens"] != float64(16) || usage["completion_tokens"] != float64(10) || usage["total_tokens"] != float64(26) {
+	// prompt and completion fallback usage now comes from the heuristic estimator.
+	if usage["prompt_tokens"] != float64(6) || usage["completion_tokens"] != float64(3) || usage["total_tokens"] != float64(9) {
 		t.Fatalf("usage=%v", usage)
 	}
 }
@@ -1399,8 +1399,8 @@ func TestResponsesStreamFallsBackToCharCountUsageWhenMissing(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing usage: %v", resp["usage"])
 	}
-	// input is "hi" (2 runes), output is "hello" (5 runes), with fallback K=2.
-	if usage["input_tokens"] != float64(4) || usage["output_tokens"] != float64(10) || usage["total_tokens"] != float64(14) {
+	// input and output fallback usage now comes from the heuristic estimator.
+	if usage["input_tokens"] != float64(3) || usage["output_tokens"] != float64(3) || usage["total_tokens"] != float64(6) {
 		t.Fatalf("usage=%v", usage)
 	}
 }
