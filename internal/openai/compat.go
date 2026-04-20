@@ -19,6 +19,7 @@ var (
 	toolCallTagBlockRe    = regexp.MustCompile(`(?is)<tool_call\b[^>]*>.*?</tool_call>`)
 	tcSentinelBlockRe     = regexp.MustCompile(`(?is)(?:<<<TC>>>|<<TC>>).*?(?:<<<END>>>|<<END>>)`)
 	taggedToolNameRe      = regexp.MustCompile(`(?is)<tool_call\b[^>]*>\s*<([A-Za-z0-9_.:-]+)\b`)
+	toolNameValueRe       = regexp.MustCompile(`(?is)<tool_name>\s*([^<]+?)\s*</tool_name>`)
 	jsonToolNRe           = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
 	jsonToolNameRe        = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
 	jsonToolKeyRe         = regexp.MustCompile(`(?is)"tool(?:Name)?"\s*:\s*"([^"]+)"`)
@@ -884,6 +885,11 @@ func inferToolNameFromArtifact(block string) string {
 	parsed := ParseToolSentinel(strings.TrimSpace(block))
 	for _, call := range parsed.ToolCalls {
 		if name := strings.TrimSpace(call.Name); name != "" {
+			return name
+		}
+	}
+	if m := toolNameValueRe.FindStringSubmatch(block); len(m) == 2 {
+		if name := strings.TrimSpace(m[1]); name != "" {
 			return name
 		}
 	}

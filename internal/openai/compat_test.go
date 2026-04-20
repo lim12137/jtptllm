@@ -198,6 +198,16 @@ func TestNormalizeAssistantHistoryContentMalformedToolCallPreservedInDebugMode(t
 	}
 }
 
+func TestNormalizeAssistantHistoryContentMalformedToolNameWrapperUsesInnerName(t *testing.T) {
+	t.Setenv("PROXY_LOG_IO", "")
+	src := `<tool_call><tool_name>Glob</tool_name>{"pattern":"CODEBUDDY.md"}</tool_name></tool_call>`
+	got := normalizeAssistantHistoryContent(src)
+	want := "assistant_tool_call: Glob"
+	if got != want {
+		t.Fatalf("got=%q want=%q", got, want)
+	}
+}
+
 func TestChatUsageFromCharCountScalesByRuneMultiplier(t *testing.T) {
 	usage := ChatUsageFromCharCount("hi", "回应")
 	if usage["prompt_tokens"] != 4 || usage["completion_tokens"] != 4 || usage["total_tokens"] != 8 {
