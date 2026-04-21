@@ -432,3 +432,56 @@ func findMsgEventPayload(events []string, eventType string) map[string]any {
 	}
 	return nil
 }
+
+func TestParseBracketToolUse(t *testing.T) {
+	text := "some text before\n[tool_use: Read id=call_abc123] {\"file_path\":\"/test.txt\"}"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Read" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID != "call_abc123" {
+		t.Fatalf("id=%q", res.ToolCalls[0].ID)
+	}
+	if !strings.Contains(res.ToolCalls[0].Arguments, "file_path") {
+		t.Fatalf("args=%q", res.ToolCalls[0].Arguments)
+	}
+	if !strings.Contains(res.Content, "some text before") {
+		t.Fatalf("content=%q", res.Content)
+	}
+}
+
+func TestParseBracketToolUseWithoutID(t *testing.T) {
+	text := "[tool_use: Write] {\"path\":\"/out.txt\",\"content\":\"hello\"}"
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("toolcalls=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "Write" {
+		t.Fatalf("name=%q", res.ToolCalls[0].Name)
+	}
+	if res.ToolCalls[0].ID == "" {
+		t.Fatal("id should be auto-generated")
+	}
+}
+
+func TestBuildMessagesResponseFromTextWithBracketToolUse(t *testing.T) {
+	text := "let me read that file\n[tool_use: Read id=call_abc] {\"file_path\":\"test.go\"}"
+	resp := BuildMessagesResponseFromText(text, "claude-sonnet-4-6")
+	if resp["stop_reason"] != "tool_use" {
+		t.Fatalf("stop_reason=%v", resp["stop_reason"])
+	}
+	content := resp["content"].([]any)
+	var found bool
+	for _, c := range content {
+		block := c.(map[string]any)
+		if block["type"] == "tool_use" && block["name"] == "Read" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no tool_use block found for bracket format")
+	}
+}

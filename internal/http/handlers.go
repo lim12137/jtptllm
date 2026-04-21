@@ -29,6 +29,7 @@ type Gateway interface {
 
 type Options struct {
 	DefaultModel string
+	HTTPLimit    int
 }
 
 type Server struct {
@@ -45,11 +46,15 @@ func NewServer(gateway Gateway, sessions *session.PoolManager, opts Options) *Se
 	if model == "" {
 		model = "agent"
 	}
+	limit := opts.HTTPLimit
+	if limit <= 0 {
+		limit = defaultGlobalHTTPLimit
+	}
 	return &Server{
 		gateway:      gateway,
 		sessions:     sessions,
 		defaultModel: model,
-		globalGate:   make(chan struct{}, defaultGlobalHTTPLimit),
+		globalGate:   make(chan struct{}, limit),
 	}
 }
 

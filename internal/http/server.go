@@ -4,6 +4,7 @@ import (
 	"log"
 	stdhttp "net/http"
 	"os"
+	"strconv"
 
 	"github.com/lim12137/jtptllm/internal/config"
 	"github.com/lim12137/jtptllm/internal/gateway"
@@ -24,10 +25,16 @@ func Run(addr string) error {
 	if err != nil {
 		return err
 	}
+	httpLimit := defaultGlobalHTTPLimit
+	if v := os.Getenv("PROXY_HTTP_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			httpLimit = n
+		}
+	}
 	gw := gateway.NewClient(cfg, nil)
 	sessions := session.NewPoolManager(gw, defaultSessionTTL, defaultSessionPoolSize)
-	server := NewServer(gw, sessions, Options{DefaultModel: openai.DefaultModel})
-	log.Printf("proxy server starting on %s", addr)
+	server := NewServer(gw, sessions, Options{DefaultModel: openai.DefaultModel, HTTPLimit: httpLimit})
+	log.Printf("proxy server starting on %s (http_limit=%d)", addr, httpLimit)
 	return stdhttp.ListenAndServe(addr, server.Handler())
 }
 

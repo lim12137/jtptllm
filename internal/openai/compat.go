@@ -32,6 +32,7 @@ var (
 	jsonToolNRe            = regexp.MustCompile(`(?is)"n"\s*:\s*"([^"]+)"`)
 	jsonToolNameRe         = regexp.MustCompile(`(?is)"name"\s*:\s*"([^"]+)"`)
 	jsonToolKeyRe          = regexp.MustCompile(`(?is)"tool(?:Name)?"\s*:\s*"([^"]+)"`)
+	bracketToolUseRe       = regexp.MustCompile(`(?is)\[tool_use:\s*([^\s\]]+)(?:\s+(?:id=([^\s\]]+))?)?\s*\]`)
 )
 
 const DefaultModel = "qingyuan"
@@ -1375,6 +1376,10 @@ func ParseToolSentinel(text string) ToolParseResult {
 		if len(res.ToolCalls) > 0 || res.NeedsRetry {
 			return res
 		}
+		res = parseBracketToolUse(text)
+		if len(res.ToolCalls) > 0 {
+			return res
+		}
 		return parseToolCallRawJSON(text)
 	}
 	var payload struct {
@@ -1476,6 +1481,38 @@ func parseToolCallRawJSON(text string) ToolParseResult {
 		return ToolParseResult{Content: trimmed}
 	}
 	return ToolParseResult{ToolCalls: calls, Content: ""}
+}
+
+func parseBracketToolUse(text string) ToolParseResult {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ToolParseResult{Content: ""}
+	}
+	m := bracketToolUseRe.FindStringSubmatchIndex(trimmed)
+	if m == nil {
+		return ToolParseResult{Content: trimmed}
+	}
+	name := trimmed[m[2]:m[3]]
+	id := ""
+	if m[4] >= 0 && m[5] >= 0 {
+		id = trimmed[m[4]:m[5]]
+	}
+	if strings.TrimSpace(id) == "" {
+		id = newID("call")
+	}
+	rest := strings.TrimSpace(trimmed[m[1]:])
+	argStr := ""
+	if rest != "" {
+		var parsed any
+		if err := json.Unmarshal([]byte(rest), &parsed); err == nil {
+			b, _ := json.Marshal(parsed)
+			argStr = string(b)
+		}
+	}
+	return ToolParseResult{
+		ToolCalls: []ToolCall{{ID: id, Name: name, Arguments: argStr}},
+		Content:   strings.TrimSpace(trimmed[:m[0]]),
+	}
 }
 
 func parseToolCallTaggedBlock(text string) ToolParseResult {

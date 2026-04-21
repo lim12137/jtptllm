@@ -27,7 +27,14 @@ type Client struct {
 func NewClient(cfg config.Config, httpClient *http.Client) *Client {
 	cli := httpClient
 	if cli == nil {
-		cli = &http.Client{Timeout: defaultTimeout}
+		cli = &http.Client{
+			Timeout: defaultTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 20,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		}
 	}
 	return &Client{
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
