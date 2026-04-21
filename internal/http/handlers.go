@@ -81,6 +81,7 @@ func (s *Server) Handler() stdhttp.Handler {
 	mux.HandleFunc("/v1/models", s.handleModels)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/v1/responses", s.handleResponses)
+	mux.HandleFunc("/v1/messages", s.handleMessages)
 	return withCORS(mux)
 }
 
@@ -410,6 +411,120 @@ func (s *Server) ensureSession(ctx context.Context, r *stdhttp.Request) (string,
 		lease.Release(ctx, close)
 	}
 	return lease.SessionID(), release, closeAfter, key, nil
+}
+
+func (s *Server) handleMessages(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if r.Method != stdhttp.MethodPost {
+		writeJSON(w, stdhttp.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if err := s.acquireGlobalSlot(r.Context()); err != nil {
+		writeJSON(w, stdhttp.StatusRequestTimeout, map[string]any{"error": err.Error()})
+		return
+	}
+	defer s.releaseGlobalSlot()
+	payload, err := decodeJSON(r.Body)
+	if err != nil {
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	parsed := openai.ParseMessagesRequest(payload)
+	if strings.TrimSpace(parsed.Prompt) == "" {
+		writeJSON(w, stdhttp.StatusBadRequest, map[string]any{"type": "error", "error": map[string]any{"type": "invalid_request_error", "message": "messages is empty"}})
+		return
+	}
+
+	sessionID, release, closeAfter, sessionKey, err := s.ensureSession(r.Context(), r)
+	if err != nil {
+		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": err.Error()}})
+		return
+	}
+	defer func() { release(closeAfter) }()
+	logIO(map[string]any{
+		"dir":         "in",
+		"path":        r.URL.Path,
+		"stream":      parsed.Stream,
+		"session_id":  sessionID,
+		"session_key": sessionKey,
+		"model":       parsed.Model,
+		"payload":     payload,
+		"prompt":      parsed.Prompt,
+	})
+
+	if !parsed.Stream {
+		runResp, text, promptUsed, err := s.runNonStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
+		if err != nil {
+			writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": err.Error()}})
+			return
+		}
+		if text == "" {
+			if msg, ok := gatewayRunError(runResp); ok {
+				writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": msg}})
+				return
+			}
+		}
+		respPayload := openai.BuildMessagesResponseFromText(text, parsed.Model)
+		usage := openai.NormalizeMessagesUsage(extractGatewayUsage(runResp))
+		if usage == nil {
+			usage = openai.MessagesUsageFromHeuristicFallback(promptUsed, text)
+		}
+		respPayload["usage"] = usage
+		logIO(map[string]any{
+			"dir":         "out",
+			"path":        r.URL.Path,
+			"stream":      false,
+			"session_id":  sessionID,
+			"session_key": sessionKey,
+			"model":       parsed.Model,
+			"output":      respPayload,
+		})
+		writeJSON(w, stdhttp.StatusOK, respPayload)
+		return
+	}
+
+	// Streaming: collect full output then emit Anthropic SSE events.
+	streamText, rawUsage, promptUsed, err := s.runStreamTextWithToolCallRetry(r.Context(), sessionID, parsed.Prompt)
+	if err != nil {
+		writeJSON(w, stdhttp.StatusBadGateway, map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": err.Error()}})
+		return
+	}
+	usage := openai.NormalizeMessagesUsage(rawUsage)
+	if usage == nil {
+		usage = openai.MessagesUsageFromHeuristicFallback(promptUsed, streamText)
+	}
+	if err := streamMessagesSSE(w, streamText, parsed.Model, usage); err != nil {
+		log.Printf("stream messages error: %v", err)
+		return
+	}
+	logIO(map[string]any{
+		"dir":           "out",
+		"path":          r.URL.Path,
+		"stream":        true,
+		"session_id":    sessionID,
+		"session_key":   sessionKey,
+		"model":         parsed.Model,
+		"stream_output": streamText,
+	})
+}
+
+// streamMessagesSSE writes Anthropic Messages API streaming SSE events.
+func streamMessagesSSE(w stdhttp.ResponseWriter, text string, model string, usage map[string]any) error {
+	flusher, ok := w.(stdhttp.Flusher)
+	if !ok {
+		return errors.New("streaming not supported")
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	lines := openai.BuildMessagesSSE(text, model, usage)
+
+	for _, line := range lines {
+		if _, err := io.WriteString(w, line); err != nil {
+			return err
+		}
+	}
+	flusher.Flush()
+	return nil
 }
 
 func (s *Server) runNonStreamTextWithToolCallRetry(ctx context.Context, sessionID string, prompt string) (map[string]any, string, string, error) {

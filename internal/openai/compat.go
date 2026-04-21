@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"math/rand"
 	"os"
@@ -83,6 +84,13 @@ func intFromAny(v any) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func intFromAnyOr(v any, def int) int {
+	if n, ok := intFromAny(v); ok {
+		return n
+	}
+	return def
 }
 
 // NormalizeResponsesUsage converts upstream usage into Responses usage keys:
@@ -2290,4 +2298,474 @@ func sseEvent(event string, obj map[string]any) string {
 	obj["type"] = event
 	b, _ := json.Marshal(obj)
 	return "event: " + event + "\n" + "data: " + string(b) + "\n\n"
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic Messages API (/v1/messages) support
+// ---------------------------------------------------------------------------
+
+// AnthropicMessageContent represents a content block in the Anthropic Messages API.
+type AnthropicMessageContent struct {
+	Type  string `json:"type"`
+	Text  string `json:"text,omitempty"`
+	// tool_use fields
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Input any    `json:"input,omitempty"`
+	// tool_result fields
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   any    `json:"content,omitempty"`
+}
+
+// AnthropicMessage represents a message in the Anthropic Messages API.
+type AnthropicMessage struct {
+	Role    string                    `json:"role"`
+	Content []AnthropicMessageContent `json:"content"`
+}
+
+// ParseMessagesRequest parses an Anthropic Messages API request into the
+// internal ParsedRequest format.
+func ParseMessagesRequest(payload map[string]any) ParsedRequest {
+	model := strOr(payload["model"], DefaultModel)
+	stream := boolOr(payload["stream"], false)
+
+	upstreamModel := mapAnthropicModel(model)
+
+	prompt := PromptFromMessages(payload)
+
+	tools := extractAnthropicTools(payload)
+	choice := extractAnthropicToolChoice(payload)
+	prefix := buildToolSystemPrefix(tools, choice)
+	prompt = injectModelMarker(upstreamModel, prompt)
+	prompt = prependSystemPrefix(prefix, prompt)
+	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream, HasTools: len(tools) > 0}
+}
+
+// mapAnthropicModel maps Anthropic model names to upstream model identifiers.
+// Haiku models → fast, everything else → deepseek.
+func mapAnthropicModel(model string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "haiku") {
+		return "fast"
+	}
+	return "deepseek"
+}
+
+// PromptFromMessages builds the internal prompt string from an Anthropic
+// Messages API request payload.
+func PromptFromMessages(payload map[string]any) string {
+	var lines []string
+
+	// Anthropic puts system as a top-level field.
+	system := extractAnthropicSystem(payload)
+	if system != "" {
+		lines = append(lines, "system: "+system)
+	}
+
+	// messages array
+	messages := asAnthropicMessages(payload["messages"])
+	for _, msg := range messages {
+		if line := anthropicMessageToPromptLine(msg); line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func extractAnthropicSystem(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	switch v := payload["system"].(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		// Anthropic can send system as [{type:"text",text:"..."}]
+		var parts []string
+		for _, item := range v {
+			if m, ok := item.(map[string]any); ok {
+				if t, ok := m["text"].(string); ok {
+					parts = append(parts, t)
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	default:
+		return ""
+	}
+}
+
+func asAnthropicMessages(v any) []AnthropicMessage {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]AnthropicMessage, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		msg := AnthropicMessage{}
+		if r, ok := m["role"].(string); ok {
+			msg.Role = r
+		}
+		switch c := m["content"].(type) {
+		case string:
+			msg.Content = []AnthropicMessageContent{{Type: "text", Text: c}}
+		case []any:
+			for _, block := range c {
+				if bm, ok := block.(map[string]any); ok {
+					block := AnthropicMessageContent{}
+					block.Type, _ = bm["type"].(string)
+					block.Text, _ = bm["text"].(string)
+					block.ID, _ = bm["id"].(string)
+					block.Name, _ = bm["name"].(string)
+					block.ToolUseID, _ = bm["tool_use_id"].(string)
+					if input, ok := bm["input"]; ok {
+						block.Input = input
+					}
+					if content, ok := bm["content"]; ok {
+						block.Content = content
+					}
+					msg.Content = append(msg.Content, block)
+				}
+			}
+		case nil:
+			msg.Content = nil
+		default:
+			msg.Content = []AnthropicMessageContent{{Type: "text", Text: toString(c)}}
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
+func anthropicMessageToPromptLine(msg AnthropicMessage) string {
+	role := strings.TrimSpace(msg.Role)
+	if role == "" {
+		role = "user"
+	}
+	if len(msg.Content) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for _, block := range msg.Content {
+		text := anthropicContentBlockToText(block)
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	content := strings.Join(parts, "\n")
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	return role + ": " + content
+}
+
+func anthropicContentBlockToText(block AnthropicMessageContent) string {
+	switch block.Type {
+	case "text":
+		return block.Text
+	case "tool_use":
+		argStr := normalizeArgs(block.Input)
+		return fmt.Sprintf("[tool_use: %s id=%s] %s", block.Name, block.ID, argStr)
+	case "tool_result":
+		resultText := coerceAnthropicContentToStr(block.Content)
+		return fmt.Sprintf("[tool_result: %s] %s", block.ToolUseID, resultText)
+	case "thinking":
+		// Skip thinking blocks in prompt construction
+		return ""
+	default:
+		if block.Text != "" {
+			return block.Text
+		}
+		return ""
+	}
+}
+
+func coerceAnthropicContentToStr(content any) string {
+	return coerceContentToStr(content)
+}
+
+// extractAnthropicTools converts Anthropic tool definitions to the internal
+// compressed tool format used by buildToolSystemPrefix.
+func extractAnthropicTools(payload map[string]any) []map[string]any {
+	if payload == nil {
+		return nil
+	}
+	tools, ok := payload["tools"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(tools))
+	for _, item := range tools {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		// Map Anthropic input_schema → parameters, then reuse compressTool.
+		if _, has := m["parameters"]; !has {
+			if schema, ok := m["input_schema"].(map[string]any); ok {
+				m["parameters"] = schema
+			}
+		}
+		// Build a synthetic function object that compressTool expects.
+		fn := map[string]any{
+			"name":        m["name"],
+			"description": m["description"],
+			"parameters":  m["parameters"],
+		}
+		tool := compressTool(fn)
+		if tool != nil {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+// extractAnthropicToolChoice extracts the tool choice from the Anthropic format.
+func extractAnthropicToolChoice(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	v, ok := payload["tool_choice"]
+	if !ok {
+		return ""
+	}
+	// Handle Anthropic-specific type:any / type:auto / type:none.
+	if tc, ok := v.(map[string]any); ok {
+		if t, ok := tc["type"].(string); ok {
+			switch t {
+			case "any", "auto":
+				return "auto"
+			case "none":
+				return "none"
+			}
+		}
+	}
+	// Fall through to shared logic for string / map with name.
+	return toolChoiceName(v)
+}
+
+// BuildMessagesResponseFromText builds a non-streaming Anthropic Messages API
+// response from raw text, handling tool calls.
+func BuildMessagesResponseFromText(text string, model string) map[string]any {
+	parsed := ParseToolSentinel(text)
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" && len(parsed.ToolCalls) == 0 && !parsed.NeedsRetry {
+		content = strings.TrimSpace(text)
+	}
+
+	msgID := newID("msg")
+	outputContent := make([]any, 0, len(parsed.ToolCalls)+1)
+	if content != "" {
+		outputContent = append(outputContent, map[string]any{
+			"type": "text",
+			"text": content,
+		})
+	}
+
+	stopReason := "end_turn"
+	if len(parsed.ToolCalls) > 0 {
+		stopReason = "tool_use"
+		for _, call := range parsed.ToolCalls {
+			inputStr := call.Arguments
+			if strings.TrimSpace(inputStr) == "" {
+				inputStr = "{}"
+			}
+			var input any
+			if err := json.Unmarshal([]byte(inputStr), &input); err != nil {
+				input = map[string]any{}
+			}
+			outputContent = append(outputContent, map[string]any{
+				"type":  "tool_use",
+				"id":    call.ID,
+				"name":  call.Name,
+				"input": input,
+			})
+		}
+	}
+
+	return map[string]any{
+		"id":            msgID,
+		"type":          "message",
+		"role":          "assistant",
+		"model":         model,
+		"content":       outputContent,
+		"stop_reason":   stopReason,
+		"stop_sequence": nil,
+		"usage": map[string]any{
+			"input_tokens":  0,
+			"output_tokens": 0,
+		},
+	}
+}
+
+// MessagesUsageFromHeuristicFallback estimates Anthropic Messages usage when
+// upstream usage is missing.
+func MessagesUsageFromHeuristicFallback(input string, output string) map[string]any {
+	in := estimateTextTokens(input)
+	out := estimateTextTokens(output)
+	return map[string]any{
+		"input_tokens":  in,
+		"output_tokens": out,
+	}
+}
+
+// NormalizeMessagesUsage converts upstream usage into Anthropic Messages usage keys.
+func NormalizeMessagesUsage(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if u, ok := raw["usage"].(map[string]any); ok {
+		raw = u
+	}
+	if in, ok := intFromAny(raw["input_tokens"]); ok {
+		out, _ := intFromAny(raw["output_tokens"])
+		return map[string]any{
+			"input_tokens":  in,
+			"output_tokens": out,
+		}
+	}
+	if p, okP := intFromAny(raw["prompt_tokens"]); okP {
+		c, _ := intFromAny(raw["completion_tokens"])
+		return map[string]any{
+			"input_tokens":  p,
+			"output_tokens": c,
+		}
+	}
+	return nil
+}
+
+// BuildMessagesSSE builds the SSE event list for a streaming Anthropic Messages
+// API response from the full text output.
+func BuildMessagesSSE(text string, model string, usage map[string]any) []string {
+	msgID := newID("msg")
+	var out []string
+
+	if usage == nil {
+		usage = map[string]any{"input_tokens": 0, "output_tokens": 0}
+	}
+	inputTok := intFromAnyOr(usage["input_tokens"], 0)
+
+	parsed := ParseToolSentinel(text)
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" && len(parsed.ToolCalls) == 0 && !parsed.NeedsRetry {
+		content = strings.TrimSpace(text)
+	}
+
+	// message_start
+	out = append(out, sseEvent("message_start", map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id":            msgID,
+			"type":          "message",
+			"role":          "assistant",
+			"content":       []any{},
+			"model":         model,
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage": map[string]any{
+				"input_tokens":  inputTok,
+				"output_tokens": 0,
+			},
+		},
+	}))
+
+	// Text content block
+	if content != "" {
+		out = append(out, sseEvent("content_block_start", map[string]any{
+			"type":  "content_block_start",
+			"index": 0,
+			"content_block": map[string]any{
+				"type": "text",
+				"text": "",
+			},
+		}))
+
+		out = append(out, sseEvent("content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{
+				"type": "text_delta",
+				"text": content,
+			},
+		}))
+
+		out = append(out, sseEvent("content_block_stop", map[string]any{
+			"type":  "content_block_stop",
+			"index": 0,
+		}))
+	}
+
+	// Tool use content blocks
+	if len(parsed.ToolCalls) > 0 {
+		blockIdx := 0
+		if content != "" {
+			blockIdx = 1
+		}
+		for _, call := range parsed.ToolCalls {
+			inputStr := call.Arguments
+			if strings.TrimSpace(inputStr) == "" {
+				inputStr = "{}"
+			}
+			callID := call.ID
+			if strings.TrimSpace(callID) == "" {
+				callID = newID("toolu")
+			}
+
+			out = append(out, sseEvent("content_block_start", map[string]any{
+				"type":  "content_block_start",
+				"index": blockIdx,
+				"content_block": map[string]any{
+					"type":  "tool_use",
+					"id":    callID,
+					"name":  call.Name,
+					"input": map[string]any{},
+				},
+			}))
+
+			out = append(out, sseEvent("content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": blockIdx,
+				"delta": map[string]any{
+					"type":         "input_json_delta",
+					"partial_json": inputStr,
+				},
+			}))
+
+			out = append(out, sseEvent("content_block_stop", map[string]any{
+				"type":  "content_block_stop",
+				"index": blockIdx,
+			}))
+			blockIdx++
+		}
+	}
+
+	// message_delta + message_stop
+	stopReason := "end_turn"
+	if len(parsed.ToolCalls) > 0 {
+		stopReason = "tool_use"
+	}
+	outputTok := intFromAnyOr(usage["output_tokens"], 0)
+	out = append(out, sseEvent("message_delta", map[string]any{
+		"type": "message_delta",
+		"delta": map[string]any{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": map[string]any{
+			"output_tokens": outputTok,
+		},
+	}))
+
+	out = append(out, sseEvent("message_stop", map[string]any{
+		"type": "message_stop",
+	}))
+
+	return out
 }
