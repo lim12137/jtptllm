@@ -26,7 +26,9 @@ FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /app
 COPY --from=builder /out/proxy /app/proxy
-COPY --chown=nonroot:nonroot api.txt /app/api.txt 2>/dev/null || true
+
+# api.txt is optional at build time, should be mounted from host at runtime
+# COPY --chown=nonroot:nonroot api.txt /app/api.txt
 
 ENV GOMEMLIMIT=512MiB
 

@@ -166,9 +166,55 @@ integration-test:
 
 ## 注意事项
 
-1. **api.txt 文件**: Dockerfile 中保留了 api.txt 的拷贝，但该文件应该通过环境变量或 ConfigMap 注入，而非硬编码到镜像中
+1. **api.txt 文件**: 
 
-2. **健康检查端点**: 健康检查假设应用支持 `-health` 参数，需要确认应用是否实现了此功能
+**构建时不需要 api.txt**，Dockerfile 已经移除了构建时复制 api.txt 的步骤。
+
+**运行时挂载方式**:
+
+```bash
+# Docker CLI
+docker run -v /path/to/your/api.txt:/app/api.txt:ro ghcr.io/your/repo:latest
+
+# Docker Compose
+version: '3'
+services:
+  proxy:
+    image: ghcr.io/your/repo:latest
+    volumes:
+      - ./api.txt:/app/api.txt:ro
+
+# Kubernetes ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxy-config
+data:
+  api.txt: |
+    <your config here>
+
+# Pod spec
+volumeMounts:
+  - name: config
+    mountPath: /app/api.txt
+    subPath: api.txt
+    readOnly: true
+volumes:
+  - name: config
+    configMap:
+      name: proxy-config
+```
+
+**好处**:
+- ✅ 镜像构建不依赖敏感配置文件
+- ✅ 同一镜像可在不同环境使用不同配置
+- ✅ 符合 12-Factor 应用配置分离原则
+- ✅ 避免配置文件进入镜像层
+
+2. **健康检查端点**: 健康检查假设应用支持 `-health` 参数，需要确认应用是否实现了此功能。如果不支持，可以：
+   - 在应用中实现健康检查端点
+   - 或者移除 HEALTHCHECK 指令
+   - 或者使用其他方式 (如检查端口)
 
 3. **非 root 用户**: 镜像已经使用非 root 用户运行，这是安全最佳实践
 
