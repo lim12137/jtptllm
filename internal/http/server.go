@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"log"
 	stdhttp "net/http"
 	"os"
@@ -40,8 +41,22 @@ func Run(addr string) error {
 
 func loadConfig(path string) (config.Config, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return config.Config{}, err
+	if err == nil {
+		return config.ParseApiTxt(data)
 	}
-	return config.ParseApiTxt(data)
+	appKey := os.Getenv("AGENT_APP_KEY")
+	agentCode := os.Getenv("AGENT_AGENT_CODE")
+	if appKey == "" || agentCode == "" {
+		return config.Config{}, fmt.Errorf("api.txt not found and AGENT_APP_KEY/AGENT_AGENT_CODE env vars not set")
+	}
+	baseURL := os.Getenv("AGENT_BASE_URL")
+	if baseURL == "" {
+		baseURL = config.DefaultBaseURL
+	}
+	return config.Config{
+		AppKey:       appKey,
+		AgentCode:    agentCode,
+		AgentVersion: os.Getenv("AGENT_AGENT_VERSION"),
+		BaseURL:      baseURL,
+	}, nil
 }

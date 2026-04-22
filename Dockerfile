@@ -11,7 +11,6 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -buil
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /app
 COPY --from=builder /out/proxy /app/proxy
-COPY api.txt /app/api.txt
 ENV GOMEMLIMIT=512MiB
 USER nonroot:nonroot
 ENTRYPOINT ["/app/proxy"]
