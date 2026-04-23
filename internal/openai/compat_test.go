@@ -701,6 +701,53 @@ func TestBuildResponsesResponseFromTextCreatesFunctionCalls(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesResponseFromTextWithToolNameTag(t *testing.T) {
+	// Test format: <tool_name>name{args}</tool_name>
+	text1 := `<tool_name>get_weather{"city":" 北京 "}</tool_name>`
+	out1 := BuildResponsesResponseFromText(text1, "agent")
+	output1 := out1["output"].([]any)
+	if len(output1) != 1 {
+		t.Fatalf("expected 1 output, got=%d", len(output1))
+	}
+	item1 := output1[0].(map[string]any)
+	if item1["type"] != "function_call" {
+		t.Fatalf("type=%v", item1["type"])
+	}
+	if item1["name"] != "get_weather" {
+		t.Fatalf("name=%v", item1["name"])
+	}
+	var args1 map[string]any
+	if err := json.Unmarshal([]byte(item1["arguments"].(string)), &args1); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args1["city"] != " 北京 " {
+		t.Fatalf("args city=%v", args1["city"])
+	}
+
+	// Test format: <tool_name>name</tool_name>{args}
+	text2 := `<tool_name>Read</tool_name>{"file_path":"test.txt"}`
+	out2 := BuildResponsesResponseFromText(text2, "agent")
+	output2 := out2["output"].([]any)
+	if len(output2) != 1 {
+		t.Fatalf("expected 1 output, got=%d", len(output2))
+	}
+	item2 := output2[0].(map[string]any)
+	if item2["type"] != "function_call" {
+		t.Fatalf("type=%v", item2["type"])
+	}
+	if item2["name"] != "Read" {
+		t.Fatalf("name=%v", item2["name"])
+	}
+	var args2 map[string]any
+	if err := json.Unmarshal([]byte(item2["arguments"].(string)), &args2); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args2["file_path"] != "test.txt" {
+		t.Fatalf("args file_path=%v", args2["file_path"])
+	}
+}
+
+
 func TestParseToolSentinelFallbackToPlainText(t *testing.T) {
 	text := "<<<TC>>>not json<<<END>>>"
 	out := BuildChatCompletionResponseFromText(text, "agent")

@@ -1846,6 +1846,59 @@ func TestResponsesStreamTagWrappedToolCallUsesFunctionEventsNotOutputText(t *tes
 	}
 }
 
+func TestResponsesStreamToolNameTagFormat(t *testing.T) {
+	// Test format: <tool_name>name{args}</tool_name>
+	streamText := `<tool_name>get_weather{"city":" 北京 "}</tool_name>`
+	evt := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{"text": streamText},
+		},
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	end, _ := json.Marshal(map[string]any{"end": true})
+	sse := "data: " + string(b) + "\n\n" +
+		"data: " + string(end) + "\n\n"
+	gw := &stubGateway{streamResp: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	srv := newTestServer(gw)
+
+	payload := map[string]any{
+		"model":  "agent",
+		"stream": true,
+		"input":  "check weather",
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(bodyBytes))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	evts := parseSSEEvents(t, rec.Body.String())
+
+	// Should not emit text delta for tool calls
+	if len(eventsByType(evts, "response.output_text.delta")) != 0 {
+		t.Fatalf("tool call stream must not emit response.output_text.delta: %s", rec.Body.String())
+	}
+	// Should emit function call events
+	if len(eventsByType(evts, "response.function_call_arguments.delta")) < 1 {
+		t.Fatalf("missing response.function_call_arguments.delta: %s", rec.Body.String())
+	}
+	done := eventsByType(evts, "response.function_call_arguments.done")
+	if len(done) != 1 {
+		t.Fatalf("missing response.function_call_arguments.done: %s", rec.Body.String())
+	}
+	if done[0].Data["name"] != "get_weather" {
+		t.Fatalf("function name=%v, expected get_weather", done[0].Data["name"])
+	}
+}
+
 func TestResponsesStreamFragmentedTagWrappedToolCallUsesFunctionEventsNotOutputText(t *testing.T) {
 	fragments := []string{
 		"<tool_call><multi_tool_use.parallel>",
