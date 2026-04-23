@@ -1520,6 +1520,17 @@ func parseToolCallTaggedBlock(text string) ToolParseResult {
 	if trimmed == "" {
 		return ToolParseResult{Content: ""}
 	}
+	
+	// Direct tool_name tag support (without  wrapper)
+	if lower := strings.ToLower(trimmed); strings.HasPrefix(lower, "<tool_name>") {
+		if name, argBytes, ok := parseToolNameTaggedToolCall(trimmed); ok {
+			return ToolParseResult{
+				ToolCalls: []ToolCall{{ID: newID("call"), Name: name, Arguments: string(argBytes)}},
+				Content:   "",
+			}
+		}
+	}
+	
 	if toolCallOpenTagRe.FindStringIndex(trimmed) == nil {
 		return ToolParseResult{Content: trimmed}
 	}
@@ -1708,14 +1719,29 @@ func parseToolNameTaggedToolCall(inner string) (string, []byte, bool) {
 		return "", nil, false
 	}
 	closeIdx := strings.Index(strings.ToLower(rest), closeTag)
-	rawName := ""
-	argText := ""
+	
+	var rawName, argText string
 	if closeIdx >= 0 {
-		rawName = strings.TrimSpace(rest[:closeIdx])
-		argText = strings.TrimSpace(rest[closeIdx+len(closeTag):])
+		// Format: <tool_name>name</tool_name>args
+		// OR:     <tool_name>name{args}</tool_name>
+		contentInside := strings.TrimSpace(rest[:closeIdx])
+		argAfter := strings.TrimSpace(rest[closeIdx+len(closeTag):])
+		
+		if argAfter != "" {
+			// Arguments are after </tool_name>
+			rawName = contentInside
+			argText = argAfter
+		} else {
+			// Arguments are inside <tool_name>...</tool_name>
+			var _ string
+			rawName, argText = splitLooseToolNameAndArgs(contentInside)
+		}
 	} else {
+		// No closing tag, arguments must be inside
+		var _ string
 		rawName, argText = splitLooseToolNameAndArgs(rest)
 	}
+	
 	name := normalizeToolName(rawName)
 	if name == "" {
 		return "", nil, false

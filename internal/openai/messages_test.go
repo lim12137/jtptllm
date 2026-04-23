@@ -124,6 +124,43 @@ func TestParseMessagesRequestToolChoiceNamed(t *testing.T) {
 	}
 }
 
+func TestParseToolNameTagExtraction(t *testing.T) {
+	// Test format: <tool_name>name{args}</tool_name>
+	text := `<tool_name>get_weather{"city":" 北京 "}</tool_name>`
+	res := ParseToolSentinel(text)
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got=%d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "get_weather" {
+		t.Fatalf("tool name should be get_weather, got=%q", res.ToolCalls[0].Name)
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(res.ToolCalls[0].Arguments), &args); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args["city"] != " 北京 " {
+		t.Fatalf("args city=%v", args["city"])
+	}
+	
+	// Test format: <tool_name>name</tool_name>args
+	text2 := `<tool_name>Read</tool_name>{"file_path":"test.txt"}`
+	res2 := ParseToolSentinel(text2)
+	if len(res2.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got=%d", len(res2.ToolCalls))
+	}
+	if res2.ToolCalls[0].Name != "Read" {
+		t.Fatalf("tool name should be Read, got=%q", res2.ToolCalls[0].Name)
+	}
+	var args2 map[string]any
+	if err := json.Unmarshal([]byte(res2.ToolCalls[0].Arguments), &args2); err != nil {
+		t.Fatalf("bad args json: %v", err)
+	}
+	if args2["file_path"] != "test.txt" {
+		t.Fatalf("args file_path=%v", args2["file_path"])
+	}
+}
+
+
 func TestParseMessagesRequestContentArray(t *testing.T) {
 	payload := map[string]any{
 		"model": "claude-sonnet-4-6",
