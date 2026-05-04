@@ -13,7 +13,7 @@ func TestChatToPrompt(t *testing.T) {
 }
 
 func TestParseToolCallsFromText(t *testing.T) {
-	got := ParseToolCallsFromText(`[function_calls][call:default_api:read_file]{"filePath":"/tmp/a.txt"}[/call][/function_calls]`, "qwen3")
+	got := ParseToolCallsFromText(`[function_calls][call:default_api:read_file]{"filePath":"/tmp/a.txt"}[/call][/function_calls]`, "fast")
 	if len(got.ToolCalls) != 1 {
 		t.Fatalf("tool calls: %d", len(got.ToolCalls))
 	}

@@ -94,9 +94,6 @@ func supportsToolCallCompat(model string) bool {
 	if m == "" {
 		return false
 	}
-	if strings.Contains(m, "qwen3") {
-		return true
-	}
 	if m == "fast" || strings.Contains(m, "fast") {
 		return true
 	}
