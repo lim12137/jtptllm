@@ -87,8 +87,17 @@ func ParseResponsesRequest(payload map[string]any) ParsedRequest {
 }
 
 func BuildChatCompletionResponse(text string, model string) map[string]any {
+	parsed := ParseToolCallsFromText(text, model)
 	created := time.Now().Unix()
 	cid := newID("chatcmpl")
+	message := map[string]any{
+		"role":    "assistant",
+		"content": parsed.Content,
+	}
+	if len(parsed.ToolCalls) > 0 {
+		message["tool_calls"] = parsed.ToolCalls
+		message["content"] = nil
+	}
 	return map[string]any{
 		"id":      cid,
 		"object":  "chat.completion",
@@ -97,10 +106,7 @@ func BuildChatCompletionResponse(text string, model string) map[string]any {
 		"choices": []any{
 			map[string]any{
 				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": text,
-				},
+				"message": message,
 				"finish_reason": "stop",
 			},
 		},
@@ -113,8 +119,22 @@ func BuildChatCompletionResponse(text string, model string) map[string]any {
 }
 
 func BuildResponsesResponse(text string, model string) map[string]any {
+	parsed := ParseToolCallsFromText(text, model)
 	rid := newID("resp")
 	created := time.Now().Unix()
+	content := []any{
+		map[string]any{"type": "output_text", "text": parsed.Content},
+	}
+	if len(parsed.ToolCalls) > 0 {
+		for _, tc := range parsed.ToolCalls {
+			content = append(content, map[string]any{
+				"type": "tool_use",
+				"id":   tc.ID,
+				"name": tc.Function.Name,
+				"input": toolCallInput(tc.Function.Arguments),
+			})
+		}
+	}
 	return map[string]any{
 		"id":         rid,
 		"object":     "response",
@@ -124,13 +144,19 @@ func BuildResponsesResponse(text string, model string) map[string]any {
 			map[string]any{
 				"type": "message",
 				"role": "assistant",
-				"content": []any{
-					map[string]any{"type": "output_text", "text": text},
-				},
+				"content": content,
 			},
 		},
-		"output_text": text,
+		"output_text": parsed.Content,
 	}
+}
+
+func toolCallInput(arguments string) any {
+	var input any
+	if err := json.Unmarshal([]byte(arguments), &input); err == nil {
+		return input
+	}
+	return arguments
 }
 
 func IterChatCompletionSSE(deltas []string, model string, chatcmplID string) []string {

@@ -264,24 +264,28 @@ func streamChatCompletion(w stdhttp.ResponseWriter, resp *stdhttp.Response, mode
 	flusher.Flush()
 
 	full := ""
+	state := openai.ToolStreamState{}
 	err := streamGateway(resp, func(chunk string) error {
 		delta := diffChunk(&full, chunk)
 		if delta == "" {
 			return nil
 		}
-		payload := map[string]any{
-			"id":      cid,
-			"object":  "chat.completion.chunk",
-			"created": created,
-			"model":   model,
-			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": delta}, "finish_reason": nil}},
+		parsed := openai.ParseToolCallsStream(delta, &state, model)
+		for _, item := range parsed.Deltas {
+			payload := chatCompletionPayload(cid, model, created, item)
+			_, _ = w.Write([]byte(sseData(payload)))
+			flusher.Flush()
 		}
-		_, _ = w.Write([]byte(sseData(payload)))
-		flusher.Flush()
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+
+	for _, item := range openai.FlushToolCallBuffer(&state, model) {
+		payload := chatCompletionPayload(cid, model, created, item)
+		_, _ = w.Write([]byte(sseData(payload)))
+		flusher.Flush()
 	}
 
 	final := map[string]any{
@@ -289,7 +293,7 @@ func streamChatCompletion(w stdhttp.ResponseWriter, resp *stdhttp.Response, mode
 		"object":  "chat.completion.chunk",
 		"created": created,
 		"model":   model,
-		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+		"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": chatCompletionFinishReason(state)}},
 	}
 	_, _ = w.Write([]byte(sseData(final)))
 	_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -548,4 +552,32 @@ func sseData(obj map[string]any) string {
 
 func newID(prefix string) string {
 	return prefix + "_" + strings.ReplaceAll(time.Now().Format("20060102150405.000000000"), ".", "")
+}
+
+func chatCompletionPayload(id string, model string, created int64, item openai.StreamDelta) map[string]any {
+	delta := map[string]any{}
+	if item.Content != "" {
+		delta["content"] = item.Content
+	}
+	if len(item.ToolCalls) > 0 {
+		toolCalls := make([]any, 0, len(item.ToolCalls))
+		for _, tc := range item.ToolCalls {
+			toolCalls = append(toolCalls, tc)
+		}
+		delta["tool_calls"] = toolCalls
+	}
+	return map[string]any{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}},
+	}
+}
+
+func chatCompletionFinishReason(state openai.ToolStreamState) string {
+	if state.HasEmittedTool {
+		return "tool_calls"
+	}
+	return "stop"
 }
