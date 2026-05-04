@@ -8,6 +8,35 @@ OpenAI 兼容中转代理（Go 版），支持：
 - `/model` 与 `/v1/models`
 - `api.txt` 挂载配置
 
+## chat 分支说明
+
+`chat` 分支在基础代理能力之外，增加了针对工具调用的兼容层。
+
+当前映射关系：
+- `model=fast`：映射到 `qwen3` 工具调用模式
+- `model=deepseek`：映射到 `deepseek 3.2` 工具调用模式
+
+当前支持范围：
+- 非流式 `/v1/chat/completions`：可将 bracket 形式工具调用转成标准 `tool_calls`
+- 非流式 `/v1/responses`：可将工具调用转成 `tool_use`
+- 流式 `/v1/chat/completions`：可将 bracket 形式工具调用转成 `delta.tool_calls`
+
+当前兼容的工具调用格式：
+
+```text
+[function_calls]
+[call:tool_name]{"arg":"value"}[/call]
+[/function_calls]
+```
+
+当前已做的特定工具兜底：
+- `write_to_file`
+- `replace_in_file`
+
+注意：
+- 其他模型名默认不启用这套工具兼容
+- `fast` 和 `deepseek` 是分支内约定的外部模型别名，不是底层真实模型名
+
 ## 运行
 
 ### 准备 api.txt
@@ -40,7 +69,7 @@ go run ./cmd/proxy --api-txt api.txt --host 0.0.0.0 --port 8022
 curl http://127.0.0.1:8022/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "agent",
+    "model": "fast",
     "messages": [{"role": "user", "content": "你好"}],
     "stream": false
   }'
@@ -52,7 +81,7 @@ curl http://127.0.0.1:8022/v1/chat/completions \
 curl http://127.0.0.1:8022/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "agent",
+    "model": "deepseek",
     "input": "你好",
     "stream": false
   }'
