@@ -26,7 +26,7 @@ func ParseToolCallsStream(content string, state *ToolStreamState, model string) 
 	if content == "" {
 		return result
 	}
-	if !supportsToolCallCompat(model) {
+	if resolveToolCompatMode(model) == ToolCompatNone {
 		result.Deltas = append(result.Deltas, StreamDelta{Content: content})
 		result.ShouldFlush = true
 		return result

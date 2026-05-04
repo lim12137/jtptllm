@@ -23,13 +23,22 @@ type ParsedToolCallText struct {
 	ToolCalls []ToolCall
 }
 
+type ToolCompatMode string
+
+const (
+	ToolCompatNone        ToolCompatMode = ""
+	ToolCompatQwen3       ToolCompatMode = "qwen3"
+	ToolCompatDeepSeek32  ToolCompatMode = "deepseek3.2"
+)
+
 func ParseToolCallsFromText(text string, model string) ParsedToolCallText {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ParsedToolCallText{}
 	}
 
-	if !supportsToolCallCompat(model) {
+	mode := resolveToolCompatMode(model)
+	if mode == ToolCompatNone {
 		return ParsedToolCallText{Content: text}
 	}
 
@@ -89,18 +98,18 @@ func normalizeFunctionCalls(text string) string {
 	return re.ReplaceAllString(text, "$1[$2")
 }
 
-func supportsToolCallCompat(model string) bool {
+func resolveToolCompatMode(model string) ToolCompatMode {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if m == "" {
-		return false
+		return ToolCompatNone
 	}
-	if m == "fast" || strings.Contains(m, "fast") {
-		return true
+	if m == "fast" {
+		return ToolCompatQwen3
 	}
-	if strings.Contains(m, "deepseek") && strings.Contains(m, "v3.2") {
-		return true
+	if m == "deepseek" {
+		return ToolCompatDeepSeek32
 	}
-	return false
+	return ToolCompatNone
 }
 
 func parseToolArgs(text string) (string, int) {

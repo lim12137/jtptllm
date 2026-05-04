@@ -51,8 +51,8 @@ func TestParseToolCallsFromTextWithContentPrefix(t *testing.T) {
 	}
 }
 
-func TestParseToolCallsFromTextForDeepSeekV32(t *testing.T) {
-	got := ParseToolCallsFromText(`[function_calls][call:replace_in_file]{"filePath":"/tmp/a.txt","old_str":"a","new_str":"b"}[/call][/function_calls]`, "deepseek-v3.2")
+func TestParseToolCallsFromTextForDeepSeek(t *testing.T) {
+	got := ParseToolCallsFromText(`[function_calls][call:replace_in_file]{"filePath":"/tmp/a.txt","old_str":"a","new_str":"b"}[/call][/function_calls]`, "deepseek")
 	if len(got.ToolCalls) != 1 {
 		t.Fatalf("tool calls: %d", len(got.ToolCalls))
 	}
@@ -69,5 +69,17 @@ func TestParseToolCallsFromTextIgnoresOtherModels(t *testing.T) {
 	}
 	if got.Content != raw {
 		t.Fatalf("content changed: %q", got.Content)
+	}
+}
+
+func TestResolveToolCompatMode(t *testing.T) {
+	if mode := resolveToolCompatMode("fast"); mode != ToolCompatQwen3 {
+		t.Fatalf("fast mode: %s", mode)
+	}
+	if mode := resolveToolCompatMode("deepseek"); mode != ToolCompatDeepSeek32 {
+		t.Fatalf("deepseek mode: %s", mode)
+	}
+	if mode := resolveToolCompatMode("agent"); mode != ToolCompatNone {
+		t.Fatalf("agent mode: %s", mode)
 	}
 }
