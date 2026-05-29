@@ -15,6 +15,8 @@ import (
 	"github.com/lim12137/jtptllm/internal/session"
 )
 
+const emptyAgentResponseCode = "empty_agent_response"
+
 type HandlerDeps struct {
 	Client       *gateway.Client
 	Sessions     *session.Manager
@@ -122,6 +124,10 @@ func handleChatCompletions(w stdhttp.ResponseWriter, r *stdhttp.Request, deps Ha
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
+		if strings.TrimSpace(text) == "" {
+			writeGatewayErrorCode(w, stdhttp.StatusBadGateway, emptyAgentResponseCode, "agent 返回为空")
+			return
+		}
 		writeJSON(w, stdhttp.StatusOK, openai.BuildChatCompletionResponse(text, model))
 		return
 	}
@@ -179,6 +185,10 @@ func handleResponses(w stdhttp.ResponseWriter, r *stdhttp.Request, deps HandlerD
 			return
 		}
 		text := extractGatewayTextFromNonStream(runResp)
+		if strings.TrimSpace(text) == "" {
+			writeGatewayErrorCode(w, stdhttp.StatusBadGateway, emptyAgentResponseCode, "agent 返回为空")
+			return
+		}
 		writeJSON(w, stdhttp.StatusOK, openai.BuildResponsesResponse(text, model))
 		return
 	}
@@ -516,10 +526,15 @@ func writeError(w stdhttp.ResponseWriter, status int, message string) {
 }
 
 func writeGatewayError(w stdhttp.ResponseWriter, err error) {
-	writeJSON(w, stdhttp.StatusBadGateway, map[string]any{
+	writeGatewayErrorCode(w, stdhttp.StatusBadGateway, "agent_gateway_error", err.Error())
+}
+
+func writeGatewayErrorCode(w stdhttp.ResponseWriter, status int, code string, message string) {
+	writeJSON(w, status, map[string]any{
 		"error": map[string]any{
-			"type":    "agent_gateway_error",
-			"message": err.Error(),
+			"type":    code,
+			"code":    code,
+			"message": message,
 		},
 	})
 }

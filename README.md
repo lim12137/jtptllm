@@ -34,6 +34,8 @@ go run ./cmd/proxy --api-txt api.txt --host 0.0.0.0 --port 8022
 
 ## API 示例
 
+当上游 agent 调用成功但回复文本为空时，代理会返回 HTTP `502`，错误码为 `empty_agent_response`，可用于调用方故障切换。
+
 ### /v1/chat/completions
 
 ```
