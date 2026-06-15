@@ -73,7 +73,7 @@ func PromptFromResponses(payload map[string]any) string {
 }
 
 func ParseChatRequest(payload map[string]any) ParsedRequest {
-	model := strOr(payload["model"], "agent")
+	model := NormalizeModelName(strOr(payload["model"], "agent"))
 	stream := boolOr(payload["stream"], false)
 	prompt := chatMessagesToPrompt(asMessages(payload["messages"]))
 	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream}
@@ -86,9 +86,67 @@ func ParseResponsesRequest(payload map[string]any) ParsedRequest {
 	return ParsedRequest{Model: model, Prompt: prompt, Stream: stream}
 }
 
+func BuildChatRequestFromResponses(payload map[string]any) map[string]any {
+	out := map[string]any{
+		"model":  strOr(payload["model"], "agent"),
+		"stream": boolOr(payload["stream"], false),
+	}
+	copyIfPresent(payload, out, "tools", "temperature", "top_p", "presence_penalty", "response_format")
+	if v, ok := payload["max_output_tokens"]; ok {
+		out["max_tokens"] = v
+	} else {
+		copyIfPresent(payload, out, "max_tokens")
+	}
+
+	if msgs, ok := payload["messages"].([]any); ok && len(msgs) > 0 {
+		out["messages"] = msgs
+		return out
+	}
+
+	var messages []any
+	if instructions, ok := payload["instructions"].(string); ok && strings.TrimSpace(instructions) != "" {
+		messages = append(messages, map[string]any{"role": "system", "content": instructions})
+	}
+	switch input := payload["input"].(type) {
+	case string:
+		if strings.TrimSpace(input) != "" {
+			messages = append(messages, map[string]any{"role": "user", "content": input})
+		}
+	case []any:
+		for _, item := range input {
+			switch iv := item.(type) {
+			case string:
+				if strings.TrimSpace(iv) != "" {
+					messages = append(messages, map[string]any{"role": "user", "content": iv})
+				}
+			case map[string]any:
+				role, _ := iv["role"].(string)
+				if strings.TrimSpace(role) == "" {
+					role = "user"
+				}
+				messages = append(messages, map[string]any{"role": role, "content": iv["content"]})
+			}
+		}
+	}
+	out["messages"] = messages
+	return out
+}
+
 func BuildChatCompletionResponse(text string, model string) map[string]any {
+	return BuildChatCompletionResponseWithUsage(text, model, nil)
+}
+
+// BuildChatCompletionResponseWithUsage 构造聊天完成响应；若 usage 为 nil 则用估算值填充。
+func BuildChatCompletionResponseWithUsage(text string, model string, usage map[string]any) map[string]any {
 	created := time.Now().Unix()
 	cid := newID("chatcmpl")
+	if usage == nil {
+		usage = map[string]any{
+			"prompt_tokens":     0,
+			"completion_tokens": 0,
+			"total_tokens":      0,
+		}
+	}
 	return map[string]any{
 		"id":      cid,
 		"object":  "chat.completion",
@@ -104,11 +162,7 @@ func BuildChatCompletionResponse(text string, model string) map[string]any {
 				"finish_reason": "stop",
 			},
 		},
-		"usage": map[string]any{
-			"prompt_tokens":     0,
-			"completion_tokens": 0,
-			"total_tokens":      0,
-		},
+		"usage": usage,
 	}
 }
 
@@ -268,6 +322,13 @@ func coerceContentToStr(content any) string {
 							chunks = append(chunks, v)
 						}
 					}
+					continue
+				}
+				// Anthropic/Claude SDK 风格：工具返回结果以 role:user + content:[{type:"tool_result"}] 传递。
+				// 这里提取其 content 字段（可能是字符串或结构），避免工具结果被丢弃导致模型重复调用。
+				if ptype == "tool_result" {
+					chunks = append(chunks, coerceToolResultContent(pv["content"]))
+					continue
 				}
 			}
 		}
@@ -278,6 +339,24 @@ func coerceContentToStr(content any) string {
 		}
 		if v2, ok := v["value"].(string); ok {
 			return v2
+		}
+	}
+	return toString(content)
+}
+
+// coerceToolResultContent 提取 tool_result 块的 content 字段为字符串。
+// content 可能是纯字符串，也可能是 [{type:"text", text:"..."}] 形式。
+func coerceToolResultContent(content any) string {
+	switch v := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []any:
+		return coerceContentToStr(v)
+	case map[string]any:
+		if t, ok := v["text"].(string); ok {
+			return t
 		}
 	}
 	return toString(content)
@@ -304,6 +383,38 @@ func toString(v any) string {
 	}
 }
 
+func ExtractTextFromChatCompletionResponse(payload map[string]any) string {
+	choices, ok := payload["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return ""
+	}
+	first, ok := choices[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	msg, ok := first["message"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(coerceContentToStr(msg["content"]))
+}
+
+func ExtractTextFromChatCompletionChunk(payload map[string]any) string {
+	choices, ok := payload["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return ""
+	}
+	first, ok := choices[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	delta, ok := first["delta"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return coerceContentToStr(delta["content"])
+}
+
 func strOr(v any, def string) string {
 	if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 		return s
@@ -311,11 +422,23 @@ func strOr(v any, def string) string {
 	return def
 }
 
+func StrOrModel(v any, def string) string {
+	return NormalizeModelName(strOr(v, def))
+}
+
 func boolOr(v any, def bool) bool {
 	if b, ok := v.(bool); ok {
 		return b
 	}
 	return def
+}
+
+func copyIfPresent(src map[string]any, dst map[string]any, keys ...string) {
+	for _, key := range keys {
+		if v, ok := src[key]; ok {
+			dst[key] = v
+		}
+	}
 }
 
 func asMessages(v any) []Message {

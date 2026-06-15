@@ -18,6 +18,8 @@ const defaultTimeout = 120 * time.Second
 
 type Client struct {
 	baseURL      string
+	mode         string
+	chatURL      string
 	appKey       string
 	agentCode    string
 	agentVersion string
@@ -31,11 +33,17 @@ func NewClient(cfg config.Config, httpClient *http.Client) *Client {
 	}
 	return &Client{
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
+		mode:         strings.TrimSpace(cfg.Mode),
+		chatURL:      strings.TrimSpace(cfg.ChatURL),
 		appKey:       cfg.AppKey,
 		agentCode:    cfg.AgentCode,
 		agentVersion: cfg.AgentVersion,
 		httpClient:   cli,
 	}
+}
+
+func (c *Client) IsCompatibleMode() bool {
+	return c.mode == config.BackendModeCompatible
 }
 
 func (c *Client) CreateSession(ctx context.Context) (string, error) {
@@ -110,6 +118,24 @@ func (c *Client) Run(ctx context.Context, req RunRequest) (*http.Response, map[s
 	return nil, out, nil
 }
 
+func (c *Client) ChatCompletions(ctx context.Context, payload map[string]any, stream bool) (*http.Response, []byte, error) {
+	url := c.chatCompletionsURL()
+	if url == "" {
+		return nil, nil, errors.New("compatible chat completions url not configured")
+	}
+	return c.doPostURL(ctx, url, payload, stream)
+}
+
+func (c *Client) Embeddings(ctx context.Context, modelID string, payload map[string]any) (*http.Response, []byte, error) {
+	url := c.aiVersionURL(modelID, "/v1/embeddings")
+	return c.doPostURL(ctx, url, payload, false)
+}
+
+func (c *Client) Rerank(ctx context.Context, modelID string, payload map[string]any) (*http.Response, []byte, error) {
+	url := c.aiVersionURL(modelID, "/v1/rerank")
+	return c.doPostURL(ctx, url, payload, false)
+}
+
 func (c *Client) postJSON(ctx context.Context, path string, payload any, out any) error {
 	resp, body, err := c.doPost(ctx, path, payload, false)
 	if err != nil {
@@ -133,11 +159,15 @@ func (c *Client) postStream(ctx context.Context, path string, payload any) (*htt
 }
 
 func (c *Client) doPost(ctx context.Context, path string, payload any, stream bool) (*http.Response, []byte, error) {
+	url := c.baseURL + "/" + strings.TrimLeft(path, "/")
+	return c.doPostURL(ctx, url, payload, stream)
+}
+
+func (c *Client) doPostURL(ctx context.Context, url string, payload any, stream bool) (*http.Response, []byte, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, nil, err
 	}
-	url := c.baseURL + "/" + strings.TrimLeft(path, "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, nil, err
@@ -166,6 +196,23 @@ func (c *Client) doPost(ctx context.Context, path string, payload any, stream bo
 		return nil, nil, err
 	}
 	return resp, body, nil
+}
+
+func (c *Client) chatCompletionsURL() string {
+	if strings.TrimSpace(c.chatURL) != "" {
+		return c.chatURL
+	}
+	if strings.Contains(c.baseURL, "/compatible-mode") {
+		return strings.TrimRight(c.baseURL, "/") + "/v1/chat/completions"
+	}
+	return ""
+}
+
+func (c *Client) aiVersionURL(modelID string, suffix string) string {
+	base := strings.TrimRight(c.baseURL, "/")
+	base = strings.TrimSuffix(base, "/agent/api")
+	base = strings.TrimSuffix(base, "/compatible-mode")
+	return base + "/ai_version/" + strings.TrimSpace(modelID) + suffix
 }
 
 func normalizeBearer(appKey string) string {
