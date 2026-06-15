@@ -25,11 +25,28 @@ agentVersion: <AGENT_VERSION>
 
 ### Docker（推荐）
 
+**Docker Compose**（开发）：
+
+```bash
+cp api.txt.example api.txt  # 填入实际的 key / agentCode
+docker compose up -d
+```
+
+**Docker Compose**（生产）：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+**手动 docker run**：
+
 ```
 docker run --rm -p 8022:8022 \
   -v $(pwd)/api.txt:/app/api.txt \
   ghcr.io/lim12137/jtptllm:latest
 ```
+
+> 可用镜像 tag：`latest`（最新 main）、`sha-<7位>`（指定 commit）
 
 ### 本地运行
 
@@ -236,5 +253,17 @@ curl http://127.0.0.1:8022/v1/rerank \
 
 ## Actions
 
-- `go-test`：所有 push/PR 触发 `go test ./...`
-- `docker-build`：push 到 main/master 或手动触发构建并推送 GHCR
+- `go-test`：所有 push/PR 触发 `go test ./...`（带 Go module 缓存）
+- `docker-build`：push 到 main/master 触发构建并推送 GHCR；支持 `workflow_dispatch` 手动触发
+  - 镜像 tag：`latest` + `sha-<commit>`
+  - 平台：`linux/amd64` + `linux/arm64`
+  - Buildx 缓存：GHA cache（`cache-from` / `cache-to`）
+
+## 配置模板
+
+| 文件 | 用途 |
+|------|------|
+| `api.txt.example` | agent 网关模式（key + agentCode + agentVersion） |
+| `api.md.example` | compatible 模式（POST 地址 + 可选 key） |
+
+复制为实际配置文件后填入值即可（`api.txt`/`api.md` 已在 `.gitignore` 中排除，不会泄露凭证）。

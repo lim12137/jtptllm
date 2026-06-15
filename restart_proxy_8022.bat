@@ -1,6 +1,12 @@
 @echo off
 setlocal
 
+REM DEPRECATED: This script starts the Python proxy (skills/api-fullflow-agent/scripts/openai_proxy_server.py).
+REM The Go version has replaced it. Use the Go binary directly instead:
+REM   jtptllm-proxy.exe --api-txt api.txt --host 0.0.0.0 --port 8022
+REM Or start in tray mode:
+REM   jtptllm-proxy.exe --tray
+
 set "PORT=8022"
 set "SCRIPT=%~dp0skills\api-fullflow-agent\scripts\openai_proxy_server.py"
 set "API_TXT=%~dp0api.txt"

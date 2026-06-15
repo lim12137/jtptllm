@@ -1,5 +1,9 @@
 # Go Proxy Implementation Plan
 
+> **⚠️ 过时文档**：本实现计划仅覆盖初期 9 个 task（模块初始化到 Docker/CI）。
+> 当前版本已远超此范围（向量接口、tool shim、tokenizer、鉴权、托盘等），
+> 本文件仅作历史参考。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 用 Go 实现 OpenAI 兼容中转代理（/v1/chat/completions + /v1/responses），支持流式 SSE、10 分钟会话复用、CORS、/model 与 /v1/models、api.txt 挂载，并提供 Docker + GitHub Actions 多架构构建。

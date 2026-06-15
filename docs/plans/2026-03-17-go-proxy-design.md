@@ -1,5 +1,10 @@
 # Go 代理服务设计（OpenAI 兼容）
 
+> **⚠️ 过时文档**：本设计文件写于项目初期，仅覆盖 chat/responses/SSE/session 复用等基础能力。
+> 当前版本已新增：向量接口 `/v1/embeddings` + `/v1/rerank`、内置模型映射、tool shim / tool loop、
+> tokenizer、访问鉴权、系统托盘、compatible-mode `api.md` 配置、Docker Compose 等。
+> 最新能力清单见项目根 `README.md`。
+
 ## 目标
 
 构建一个更小镜像、启动更快的 Go 版本中转代理，能力与现有 Python 版本一致：

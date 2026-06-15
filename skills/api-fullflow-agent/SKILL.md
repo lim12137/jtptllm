@@ -1,7 +1,11 @@
 ---
 name: api-fullflow-agent
-description: 当你需要基于 api.txt（或 APP_KEY/agentCode/agentVersion 这 3 个参数）快速搭建并运行“createSession -> run -> (feedback) -> deleteSession”全流程的 API 智能体调用器，并同时提供 OpenAI 旧接口 /v1/chat/completions 与新接口 /v1/responses 兼容代理时使用。
+description: 当你需要基于 api.txt（或 APP_KEY/agentCode/agentVersion 这 3 个参数）快速搭建并运行”createSession -> run -> (feedback) -> deleteSession”全流程的 API 智能体调用器，并同时提供 OpenAI 旧接口 /v1/chat/completions 与新接口 /v1/responses 兼容代理时使用。
 ---
+
+> **⚠️ 已被 Go 版本取代**：本 skill 是早期 Python 实现的遗留。项目已用 Go 重写
+> （`cmd/proxy` + `internal/...`），Go 版本功能更全（向量接口、tool shim、鉴权、
+> 托盘等）且性能更好。此 skill 仅供参考 / 回退使用，不再维护。
 
 # API Fullflow Agent
 
