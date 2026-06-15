@@ -1,0 +1,12 @@
+# agent 网关模式配置 (复制为 api.txt 后填入实际的 key 和 agentCode)
+# cp api.txt.example api.txt
+#
+# 启动: docker compose up -d
+# 或:   ./jtptllm-proxy --api-txt api.txt
+
+key: <APP_KEY>
+agentCode: <AGENT_CODE>
+agentVersion: <AGENT_VERSION>
+
+# 可选: 访问鉴权 token, 留空关闭鉴权
+# authToken: my-secret-token

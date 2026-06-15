@@ -1,3 +1,7 @@
+# Binaries
+*.exe
+*.exe~
+
 # Python
 __pycache__/
 *.py[cod]
@@ -8,9 +12,17 @@ worktrees/
 
 # Local config / secrets
 api.txt
+api.md
 *.env
 
 # Generated artifacts
 pdf_images/
 proxy_8022.log
 proxy_8022.err
+*.log
+*.err
+
+# Debug dumps
+shim_payload_dump.json
+shim_prompt_dump.txt
+shim_route_dump.json

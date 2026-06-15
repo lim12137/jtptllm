@@ -1,0 +1,20 @@
+# docker-compose.prod.yml — 生产部署
+# 用法: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  proxy:
+    image: ghcr.io/lim12137/jtptllm:latest
+    container_name: jtptllm-proxy
+    restart: unless-stopped
+    ports:
+      - "8022:8022"
+    volumes:
+      - ./api.txt:/app/api.txt:ro
+      # - ./api.md:/app/api.md:ro
+    environment:
+      # - AUTH_TOKEN=your-secret-token
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

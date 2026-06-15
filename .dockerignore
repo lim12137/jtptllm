@@ -11,3 +11,9 @@ docs
 *.log
 *.err
 *.bat
+*.exe
+*.exe~
+shim_payload_dump.json
+shim_prompt_dump.txt
+shim_route_dump.json
+docker-compose*.yml

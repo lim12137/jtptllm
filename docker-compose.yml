@@ -1,0 +1,18 @@
+# docker-compose.yml — 本地开发用
+# 用法: docker compose up -d
+
+services:
+  proxy:
+    image: ghcr.io/lim12137/jtptllm:latest
+    container_name: jtptllm-proxy
+    ports:
+      - "8022:8022"
+    volumes:
+      # 二选一: agent 网关模式用 api.txt, compatible 模式用 api.md
+      - ./api.txt:/app/api.txt:ro
+      # - ./api.md:/app/api.md:ro
+    environment:
+      # 覆盖监听端口 (容器内默认 8022)
+      # - PORT=8022
+      # 访问鉴权 token (留空关闭鉴权)
+      # - AUTH_TOKEN=
